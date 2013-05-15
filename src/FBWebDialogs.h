@@ -230,5 +230,10 @@ typedef void (^FBWebDialogHandler)(
                                 url:(NSURL **)url
                               error:(NSError **)error;
 
+/* Ask the delegate for a view to show the dialog.
+ * If provided, the dialog will be resized to overlap the view exactly.
+ */
+- (UIView *)webDialogsViewForDialog:(NSString *)dialog;
+
 @end
 

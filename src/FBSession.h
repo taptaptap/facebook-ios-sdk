@@ -756,4 +756,7 @@ __attribute__((deprecated));
  logged in via Safari or Facebook SSO.
 */
 + (void)renewSystemCredentials:(FBSessionRenewSystemCredentialsHandler)handler;
+
+- (void)deleteCookies;
+
 @end

@@ -244,11 +244,21 @@ static NSString* dialogBaseURL = @"https://m." FB_BASE_URL "/dialog/";
                                 isViewInvisible:isViewInvisible
                            frictionlessSettings:frictionlessSettings
                                        delegate:innerDelegate];
-    
+   
     // this reference keeps the dialog alive as needed
     innerDelegate.dialog = d;
     [d show];
     [d release];
+    /* if the delegate provides a superview, uses it and resizes to fit */
+    UIView *dialogView = [delegate webDialogsViewForDialog:dialog];
+    if (dialogView) {
+        UIView *webView = [d viewWithTag:1];
+        [d setFrame:(CGRect){CGPointZero, dialogView.frame.size}];
+        [webView setFrame:(CGRect){CGPointZero, d.frame.size}];
+        UIView *closeButton = [d viewWithTag:2];
+        [closeButton setHidden:YES];
+        [dialogView addSubview:d];
+    }
 }
 
 + (void)presentRequestsDialogModallyWithSession:(FBSession *)session

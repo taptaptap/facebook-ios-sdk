@@ -28,7 +28,7 @@ static CGFloat kBorderBlack[4] = {0.3, 0.3, 0.3, 1};
 static CGFloat kTransitionDuration = 0.3;
 
 static CGFloat kPadding = 0;
-static CGFloat kBorderWidth = 10;
+static CGFloat kBorderWidth = 0;
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -331,15 +331,17 @@ params   = _params;
         self.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
         self.contentMode = UIViewContentModeRedraw;
         
-        _webView = [[UIWebView alloc] initWithFrame:CGRectMake(kPadding, kPadding, 480, 480)];
+        _webView = [[UIWebView alloc] initWithFrame:CGRectMake(kPadding, kPadding, 300, 600)];
         _webView.delegate = self;
         _webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        _webView.tag = 1;
         [self addSubview:_webView];
         
         UIImage* closeImage = [UIImage imageNamed:@"FacebookSDKResources.bundle/FBDialog/images/close.png"];
         
         UIColor* color = [UIColor colorWithRed:167.0/255 green:184.0/255 blue:216.0/255 alpha:1];
         _closeButton = [[UIButton buttonWithType:UIButtonTypeCustom] retain];
+        _closeButton.tag = 2;
         [_closeButton setImage:closeImage forState:UIControlStateNormal];
         [_closeButton setTitleColor:color forState:UIControlStateNormal];
         [_closeButton setTitleColor:[UIColor whiteColor] forState:UIControlStateHighlighted];
@@ -401,22 +403,27 @@ params   = _params;
 }
 
 // Display the dialog's WebView with a slick pop-up animation	
-- (void)showWebView {	
-    UIWindow* window = [UIApplication sharedApplication].keyWindow;	
+- (void)showWebView {
+#if 0
+    // don't need a background view
+    UIWindow* window = [UIApplication sharedApplication].keyWindow;
     if (!window) {	
         window = [[UIApplication sharedApplication].windows objectAtIndex:0];	
     }	
     _modalBackgroundView.frame = window.frame;	
     [_modalBackgroundView addSubview:self];	
     [window addSubview:_modalBackgroundView];	
-    
-    self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);	
+#endif
+#if 0
+    // don't need animation
+    self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
     [UIView beginAnimations:nil context:nil];	
     [UIView setAnimationDuration:kTransitionDuration/1.5];	
     [UIView setAnimationDelegate:self];	
     [UIView setAnimationDidStopSelector:@selector(bounce1AnimationStopped)];	
-    self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);	
-    [UIView commitAnimations];	
+    self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);
+    [UIView commitAnimations];
+#endif
   
     _everShown = YES;
     [self dialogWillAppear];
