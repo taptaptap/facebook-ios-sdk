@@ -1088,6 +1088,7 @@
 				D2AAC07A0554694100DB518D /* Headers */,
 				D2AAC07B0554694100DB518D /* Sources */,
 				D2AAC07C0554694100DB518D /* Frameworks */,
+				B92E5BF4177239CB005AAE18 /* ShellScript */,
 			);
 			buildRules = (
 			);
@@ -1225,6 +1226,20 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "HCSOURCE=\"${SRCROOT}/../vendor/OCHamcrest/Source\"\nHCFRAMEWORKDIR=\"${HCSOURCE}/build/Release/OCHamcrest.framework\"\ncd \"${HCSOURCE}\"\n\ntest -e \"${HCSOURCE}\" || { echo FATAL: OCHamcrest submodule does not appear to be updated; exit 1; }\n\n# xcodebuild should take care of this, but does not work consistently when MakeIOSFramework.sh is\n# launched as part of a build step.\nmkdir -p \"${HCFRAMEWORKDIR}/Versions\"\nln -sf A \"${HCFRAMEWORKDIR}/Versions/Current\"\nln -sf Versions/Current/Resources \"${HCFRAMEWORKDIR}/Resources\"\nln -sf Versions/Current/OCHamcrest \"${HCFRAMEWORKDIR}/OCHamcrest\"\nln -sf Versions/Current/Headers \"${HCFRAMEWORKDIR}/Headers\"\n\n./MakeIOSFramework.sh\n";
+			showEnvVarsInLog = 0;
+		};
+		B92E5BF4177239CB005AAE18 /* ShellScript */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "echo \"Copy FacebookSDK headers...\"\n\nINCLUDES_DIR=\"${BUILT_PRODUCTS_DIR}/${PROJECT}\"\nPUBLIC_INCLUDES_DIR=\"${PROJECT_DIR}/../../../../../include\"\nFBSDKHEADERS=\"${PUBLIC_INCLUDES_DIR}/FacebookSDK\"\n\nmkdir -p \"${FBSDKHEADERS}\"\n\nfind \"${INCLUDES_DIR}/\" -name \"*.h\" | while read file; do\n    cp \"$file\" \"${FBSDKHEADERS}\"\ndone\n";
 			showEnvVarsInLog = 0;
 		};
 		B9CBC517152537270036AA71 /* ShellScript */ = {
