@@ -53,6 +53,8 @@
  */
 @property(nonatomic, retain) NSMutableDictionary* params;
 
+@property(nonatomic, assign) BOOL showInWindow;
+
 - (NSString *) getStringFromUrl: (NSString*) url needle:(NSString *) needle;
 
 - (id)initWithURL: (NSString *) loadingURL

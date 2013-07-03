@@ -404,27 +404,24 @@ params   = _params;
 
 // Display the dialog's WebView with a slick pop-up animation	
 - (void)showWebView {
-#if DARKROOM
-    // don't need a background view
-    UIWindow* window = [UIApplication sharedApplication].keyWindow;
-    if (!window) {	
-        window = [[UIApplication sharedApplication].windows objectAtIndex:0];
-    }	
-    _modalBackgroundView.frame = window.frame;	
-    [_modalBackgroundView addSubview:self];	
-    [window addSubview:_modalBackgroundView];	
-#endif
-#if DARKROOM
-    // don't need animation
-    self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
-    [UIView beginAnimations:nil context:nil];	
-    [UIView setAnimationDuration:kTransitionDuration/1.5];	
-    [UIView setAnimationDelegate:self];	
-    [UIView setAnimationDidStopSelector:@selector(bounce1AnimationStopped)];	
-    self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);
-    [UIView commitAnimations];
-#endif
-  
+    if (self.showInWindow) {
+        UIWindow* window = [UIApplication sharedApplication].keyWindow;
+        if (!window) {
+            window = [[UIApplication sharedApplication].windows objectAtIndex:0];
+        }
+        _modalBackgroundView.frame = window.frame;
+        [_modalBackgroundView addSubview:self];
+        [window addSubview:_modalBackgroundView];
+
+        self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
+        [UIView beginAnimations:nil context:nil];
+        [UIView setAnimationDuration:kTransitionDuration/1.5];
+        [UIView setAnimationDelegate:self];
+        [UIView setAnimationDidStopSelector:@selector(bounce1AnimationStopped)];
+        self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);
+        [UIView commitAnimations];
+    }
+
     _everShown = YES;
     [self dialogWillAppear];
     [self addObservers];	

@@ -261,10 +261,10 @@ static NSString* dialogBaseURL = @"https://m." FB_BASE_URL "/dialog/";
    
     // this reference keeps the dialog alive as needed
     innerDelegate.dialog = d;
-    [d show];
-
     UIView *dialogView = [delegate webDialogsViewForDialog:dialog];
+
     if (dialogView) {
+        [d show];
         UIView *webView = [d viewWithTag:1];
         [d setFrame:(CGRect){CGPointZero, dialogView.frame.size}];
         [webView setFrame:(CGRect){CGPointZero, d.frame.size}];
@@ -277,6 +277,9 @@ static NSString* dialogBaseURL = @"https://m." FB_BASE_URL "/dialog/";
         UIView *closeButton = [d viewWithTag:2];
         [closeButton setHidden:YES];
         [dialogView addSubview:d];
+    } else {
+        d.showInWindow = YES;
+        [d show];
     }
     [d release];
 }
