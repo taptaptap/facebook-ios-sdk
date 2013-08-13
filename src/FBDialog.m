@@ -144,16 +144,22 @@ params   = _params;
 }
 
 - (CGAffineTransform)transformForOrientation {
+    CGAffineTransform windowTransform = [UIApplication sharedApplication].keyWindow.transform;
+    CGAffineTransform t;
     UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
     if (orientation == UIInterfaceOrientationLandscapeLeft) {
-        return CGAffineTransformMakeRotation(M_PI*1.5);
-    } else if (orientation == UIInterfaceOrientationLandscapeRight) {
-        return CGAffineTransformMakeRotation(M_PI/2);
-    } else if (orientation == UIInterfaceOrientationPortraitUpsideDown) {
-        return CGAffineTransformMakeRotation(-M_PI);
-    } else {
-        return CGAffineTransformIdentity;
+        t = CGAffineTransformMakeRotation(-M_PI_2);
     }
+    else if (orientation == UIInterfaceOrientationLandscapeRight) {
+        t = CGAffineTransformMakeRotation(M_PI_2);
+    }
+    else if (orientation == UIInterfaceOrientationPortraitUpsideDown) {
+        t = CGAffineTransformMakeRotation(M_PI);
+    }
+    else {
+        t = CGAffineTransformIdentity;
+    }
+    return CGAffineTransformConcat(CGAffineTransformInvert(windowTransform), t);
 }
 
 - (void)sizeToFitOrientation:(BOOL)transform {
@@ -513,9 +519,9 @@ params   = _params;
 
 - (void)deviceOrientationDidChange:(void*)object {
     UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
-    if (!_showingKeyboard && [self shouldRotateToOrientation:orientation]) {
+    if ([self shouldRotateToOrientation:orientation]) {
         [self updateWebOrientation];
-        
+
         CGFloat duration = [UIApplication sharedApplication].statusBarOrientationAnimationDuration;
         [UIView beginAnimations:nil context:nil];
         [UIView setAnimationDuration:duration];
