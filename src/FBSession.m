@@ -820,6 +820,18 @@ static FBSession *g_activeSession = nil;
     BOOL tryFallback =  (behavior == FBSessionLoginBehaviorWithFallbackToWebView) ||
                         (behavior == FBSessionLoginBehaviorForcingWebView);
     
+    if (behavior == FBSessionLoginBehaviorTTTCustomSSO) {
+        [self authorizeWithPermissions:(NSArray*)permissions
+                       defaultAudience:audience
+                        integratedAuth:NO
+                             FBAppAuth:YES
+                            safariAuth:NO
+                              fallback:NO
+                         isReauthorize:isReauthorize
+                   canFetchAppSettings:YES];
+        return;
+    }
+    
     [self authorizeWithPermissions:(NSArray*)permissions
                    defaultAudience:audience
                     integratedAuth:tryIntegratedAuth
