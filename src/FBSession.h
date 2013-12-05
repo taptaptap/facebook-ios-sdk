@@ -513,6 +513,10 @@ __attribute__((deprecated));
                      defaultAudience:(FBSessionDefaultAudience)defaultAudience
                    completionHandler:(FBSessionRequestPermissionResultHandler)handler;
 
+- (void)requestNewPublishPermissions:(NSArray*)writePermissions
+                            behavior:(FBSessionLoginBehavior)behavior
+                     defaultAudience:(FBSessionDefaultAudience)audience
+                   completionHandler:(FBSessionRequestPermissionResultHandler)handler;
 /*!
  @abstract
  A helper method that is used to provide an implementation for

@@ -407,6 +407,17 @@ static FBSession *g_activeSession = nil;
                    completionHandler:handler];
 }
 
+- (void)requestNewPublishPermissions:(NSArray*)writePermissions
+                            behavior:(FBSessionLoginBehavior)behavior
+                     defaultAudience:(FBSessionDefaultAudience)audience
+                   completionHandler:(FBSessionRequestPermissionResultHandler)handler {
+    [self reauthorizeWithPermissions:writePermissions
+                              isRead:YES
+                            behavior:behavior
+                     defaultAudience:audience
+                   completionHandler:handler];
+}
+
 - (void)close {
     [self checkThreadAffinity];
 
