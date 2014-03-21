@@ -144,8 +144,6 @@ static BOOL FBIsDeviceIPad() {
 }
 
 - (CGAffineTransform)transformForOrientation {
-    CGAffineTransform windowTransform = [UIApplication sharedApplication].keyWindow.transform;
-    CGAffineTransform t;
     UIInterfaceOrientation orientation = [UIApplication sharedApplication].statusBarOrientation;
     if (orientation == UIInterfaceOrientationLandscapeLeft) {
         return CGAffineTransformMakeRotation(M_PI * 1.5);
@@ -156,7 +154,6 @@ static BOOL FBIsDeviceIPad() {
     } else {
         return CGAffineTransformIdentity;
     }
-    return CGAffineTransformConcat(CGAffineTransformInvert(windowTransform), t);
 }
 
 - (void)sizeToFitOrientation:(BOOL)transform {
