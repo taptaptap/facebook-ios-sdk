@@ -2141,7 +2141,7 @@ static FBSession *g_activeSession = nil;
 #pragma mark -
 
 - (void)deleteCookies {
-    [FBSession deleteFacebookCookies];
+    [FBUtility deleteFacebookCookies];
 }
 
 @end
