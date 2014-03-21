@@ -22,6 +22,7 @@
 #import "FBTests.h"
 #import "FBUtility.h"
 #import "FBSessionTokenCachingStrategy.h"
+#import "FBSessionUtility.h"
 #import "FBSystemAccountStoreAdapter.h"
 #import "FBAccessTokenData+Internal.h"
 #import "FBError.h"
@@ -30,7 +31,6 @@
 #import <objc/objc-runtime.h>
 
 static NSString *kURLSchemeSuffix = @"URLSuffix";
-static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
 
 // We test quite a few deprecated properties.
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -41,13 +41,11 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
 @property(readwrite, copy) NSDate *refreshDate;
 @property(readwrite) FBSessionLoginType loginType;
 
-+ (NSString *)sessionStateDescription:(FBSessionState)sessionState;
-
-- (void)authorizeWithPermissions:(NSArray*)permissions
+- (void)authorizeWithPermissions:(NSArray *)permissions
                         behavior:(FBSessionLoginBehavior)behavior
                  defaultAudience:(FBSessionDefaultAudience)audience
                    isReauthorize:(BOOL)isReauthorize;
-- (void)authorizeWithPermissions:(NSArray*)permissions
+- (void)authorizeWithPermissions:(NSArray *)permissions
                  defaultAudience:(FBSessionDefaultAudience)defaultAudience
                   integratedAuth:(BOOL)tryIntegratedAuth
                        FBAppAuth:(BOOL)tryFBAppAuth
@@ -56,9 +54,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
                    isReauthorize:(BOOL)isReauthorize
              canFetchAppSettings:(BOOL)canFetchAppSettings;
 - (FBSystemAccountStoreAdapter *)getSystemAccountStoreAdapter;
-- (void)callReauthorizeHandlerAndClearState:(NSError*)error;
-- (BOOL)isSystemAccountStoreAvailable;
-- (BOOL)isMultitaskingSupported;
+- (void)callReauthorizeHandlerAndClearState:(NSError *)error;
 
 @end
 
@@ -543,7 +539,10 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
                                        tokenCacheStrategy:mockStrategy];
     
     [session close];
-    assertThatInt(session.state, equalToInt(FBSessionStateClosed));
+    // Verify that closing a token loaded session is not valid, it's the same
+    // as closing a freshly init'd session (i.e., we also do not support going from
+    // FBSessionStateCreated to FBSessionStateClosed).
+    assertThatInt(session.state, equalToInt(FBSessionStateCreatedTokenLoaded));
 }
 
 - (void)testCloseWhenOpeningSetsClosedLoginFailedState {
@@ -576,7 +575,10 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     
     [(id)mockStrategy verify];
     
-    assertThatInt(session.state, equalToInt(FBSessionStateClosed));
+    // Verify that closing a token loaded session is not valid, it's the same
+    // as closing a freshly init'd session (i.e., we also do not support going from
+    // FBSessionStateCreated to FBSessionStateClosed).
+    assertThatInt(session.state, equalToInt(FBSessionStateCreatedTokenLoaded));
 }
 
 
@@ -760,15 +762,13 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     [(id)mockSession verify];
 }
 
-/* TODO this fails if handler is nil; consider making reauthorizeWithPermission* more robust.
-
 - (void)testReauthorizeWhileReauthorizeInProgressFailsWithNilHandler {
     FBSession *mockSession = [self allocMockSessionWithNoOpAuth];
 
     FBAccessTokenData *mockToken = [self createValidMockToken];
     FBSessionTokenCachingStrategy *mockStrategy = [self createMockTokenCachingStrategyWithToken:mockToken];
     
-    FBSession *session = [mockSession initWithAppID:kAppId
+    FBSession *session = [mockSession initWithAppID:kTestAppId
                                         permissions:nil
                                     defaultAudience:FBSessionDefaultAudienceNone
                                     urlSchemeSuffix:nil
@@ -782,14 +782,15 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     [session requestNewReadPermissions:nil completionHandler:^(FBSession *session, NSError *error) {
     }];
     
+    BOOL caughtException = NO;
     @try {
         [session requestNewReadPermissions:nil completionHandler:nil];
         STFail(@"expected exception");
     } @catch (NSException *exception) {
+        caughtException = YES;
     }
+    STAssertTrue(caughtException, @"expected exception when requesting more permissions.");
 }
-
-*/
 
 - (void)testRequestNewReadPermissionsFailsIfPassedPublishPermissions {
     FBSession *session = [[FBSession alloc] initWithAppID:kTestAppId
@@ -820,7 +821,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
                                     urlSchemeSuffix:nil
                                  tokenCacheStrategy:mockStrategy];
     
-    [session openWithCompletionHandler:nil];
+    [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent completionHandler:nil];
     
     assertThatBool(session.isOpen, equalToBool(YES));
     
@@ -847,7 +848,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
                                     urlSchemeSuffix:nil
                                  tokenCacheStrategy:mockStrategy];
     
-    [session openWithCompletionHandler:nil];
+    [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent completionHandler:nil];
     
     assertThatBool(session.isOpen, equalToBool(YES));
     
@@ -913,26 +914,19 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     BOOL shouldBeSupported = [device respondsToSelector:@selector(isMultitaskingSupported)] &&
         [device isMultitaskingSupported];
 
-    [FBSession setDefaultAppID:kTestAppId];
-    FBSession *session = [[FBSession alloc] init];
-
-    assertThatBool([session isMultitaskingSupported], equalToBool(shouldBeSupported));
+    assertThatBool([FBUtility isMultitaskingSupported], equalToBool(shouldBeSupported));
 }
 
-/* TODO transitionToState: appears to be losing the isFacebookLogin-ness of cached tokens.
-
 - (void)testWillAttemptToExtendToken {
-    FBAccessTokenData *token = [self createValidMockToken];
-    // TODO add refresh date
-    [[[(id)token stub] andReturn:[NSDate dateWithTimeIntervalSince1970:0]] refreshDate];
-    FBSessionLoginType loginType = FBSessionLoginTypeFacebookApplication;
-    [[[(id)token stub] andReturnValue:OCMOCK_VALUE(loginType)] loginType];
-    BOOL yes = YES;
-    [[[(id)token stub] andReturnValue:OCMOCK_VALUE(yes)] isFacebookLogin];
+    FBAccessTokenData *token = [FBAccessTokenData createTokenFromString:@"token"
+                                                            permissions:nil
+                                                         expirationDate:[NSDate distantFuture]
+                                                              loginType:FBSessionLoginTypeFacebookApplication
+                                                            refreshDate:[NSDate dateWithTimeIntervalSince1970:0]];
     
     FBSessionTokenCachingStrategy *mockStrategy = [self createMockTokenCachingStrategyWithToken:token];
     
-    FBSession *session = [[FBSession alloc] initWithAppID:kAppId
+    FBSession *session = [[FBSession alloc] initWithAppID:kTestAppId
                                               permissions:nil
                                           defaultAudience:FBSessionDefaultAudienceNone
                                           urlSchemeSuffix:nil
@@ -943,7 +937,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     
     assertThatBool(shouldExtend, equalToBool(YES));
 }
-*/
+
 
 #pragma mark Active session tests
 
@@ -1316,7 +1310,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     const int numTests = sizeof(states) / sizeof(FBSessionState);
     
     for (int i = 0; i < numTests; ++i) {
-        NSString *description = [FBSession sessionStateDescription:states[i]];
+        NSString *description = [FBSessionUtility sessionStateDescription:states[i]];
         assertThat(description, equalTo([expectedStrings objectAtIndex:i]));
     }
 }
@@ -1337,12 +1331,12 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     [self addFacebookCookieToSharedStorage];
     
     NSHTTPCookieStorage *storage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
-    NSURL *url = [NSURL URLWithString:FBDialogBaseURL];
+    NSURL *url = [NSURL URLWithString:[FBUtility dialogBaseURL]];
     NSArray *cookiesForFacebook = [storage cookiesForURL:url];
     
     assertThatInteger(cookiesForFacebook.count, greaterThan(@0));
     
-    [FBSession deleteFacebookCookies];
+    [FBUtility deleteFacebookCookies];
     
     cookiesForFacebook = [storage cookiesForURL:url];
     
@@ -1359,7 +1353,7 @@ static NSString *const FBDialogBaseURL = @"https://m." FB_BASE_URL @"/dialog/";
     NSHTTPCookieStorage *storage = [NSHTTPCookieStorage sharedHTTPCookieStorage];
     
     NSDictionary *cookieProperties = [NSDictionary dictionaryWithObjectsAndKeys:
-                                      @"m." FB_BASE_URL, NSHTTPCookieDomain,
+                                      [FBUtility buildFacebookUrlWithPre:@"m."], NSHTTPCookieDomain,
                                       @"COOKIE!!!!", NSHTTPCookieName,
                                       @"/", NSHTTPCookiePath,
                                       @"hello", NSHTTPCookieValue,
