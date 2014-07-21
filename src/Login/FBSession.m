@@ -934,18 +934,6 @@ static FBSession *g_activeSession = nil;
                         behavior:(FBSessionLoginBehavior)behavior
                  defaultAudience:(FBSessionDefaultAudience)audience
                    isReauthorize:(BOOL)isReauthorize {
-
-    if (behavior == FBSessionLoginBehaviorTTTCustomSSO) {
-        [self authorizeWithPermissions:(NSArray*)permissions
-                       defaultAudience:audience
-                        integratedAuth:NO
-                             FBAppAuth:YES
-                            safariAuth:NO
-                              fallback:NO
-                         isReauthorize:isReauthorize
-                   canFetchAppSettings:YES];
-        return;
-    }
     
     BOOL tryIntegratedAuth = NO, tryFacebookLogin = NO, tryFallback = NO, trySafari = NO;
     switch (behavior) {
@@ -963,6 +951,9 @@ static FBSession *g_activeSession = nil;
             break;
         case FBSessionLoginBehaviorForcingSafari:
             trySafari = YES;
+            break;
+        case FBSessionLoginBehaviorTTTCustomSSO:
+            tryFacebookLogin = YES;
             break;
     }
 
