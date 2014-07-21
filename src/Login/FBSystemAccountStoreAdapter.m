@@ -20,8 +20,8 @@
 #import "FBDynamicFrameworkLoader.h"
 #import "FBError.h"
 #import "FBErrorUtility+Internal.h"
+#import "FBInternalSettings.h"
 #import "FBLogger.h"
-#import "FBSettings.h"
 #import "FBUtility.h"
 
 @interface FBSystemAccountStoreAdapter () {
@@ -132,12 +132,16 @@ static FBSystemAccountStoreAdapter *_singletonInstance = nil;
     }
 
     // app may be asking for nothing, but we will always have an array here
-    NSArray *permissionsToUse = permissions ? permissions : [NSArray array];
+    NSMutableArray *permissionsToUse = permissions ? [permissions mutableCopy] : [NSMutableArray array];
     if ([FBUtility areAllPermissionsReadPermissions:permissions]) {
         // If we have only read permissions being requested, ensure that basic info
         //  is among the permissions requested.
-        permissionsToUse = [FBUtility addBasicInfoPermission:permissionsToUse];
+        [FBUtility addBasicInfoPermission:permissionsToUse];
     }
+    NSIndexSet *publicProfilesIndexes = [permissionsToUse indexesOfObjectsPassingTest:^BOOL(id obj, NSUInteger idx, BOOL *stop) {
+        return [permissionsToUse[idx] isEqualToString:@"public_profile"];
+    }];
+    [permissionsToUse removeObjectsAtIndexes:publicProfilesIndexes];
 
     NSString *audience;
     switch (defaultAudience) {
@@ -280,15 +284,19 @@ static FBSystemAccountStoreAdapter *_singletonInstance = nil;
         // If there is a handler and we didn't return earlier (i.e, no renew call), determine an appropriate error to surface.
         NSError *error;
         if (self.accountTypeFB && !self.accountTypeFB.accessGranted) {
+            NSString *failureReasonAndDescription = @"Access has not been granted to the Facebook account. Verify device settings.";
             error = [[NSError errorWithDomain:FacebookSDKDomain
                                          code:FBErrorSystemAPI
-                                     userInfo:@{ NSLocalizedDescriptionKey : @"Access has not been granted to the Facebook account. Verify device settings."}]
+                                     userInfo:@{ NSLocalizedFailureReasonErrorKey : failureReasonAndDescription,
+                                                 NSLocalizedDescriptionKey : failureReasonAndDescription}]
                      retain];
 
         } else {
+            NSString *failureReasonAndDescription = @"The Facebook account has not been configured on the device.";
             error = [[NSError errorWithDomain:FacebookSDKDomain
                                          code:FBErrorSystemAPI
-                                     userInfo:@{ NSLocalizedDescriptionKey : @"The Facebook account has not been configured on the device."}]
+                                     userInfo:@{ NSLocalizedFailureReasonErrorKey : failureReasonAndDescription,
+                                                 NSLocalizedDescriptionKey : failureReasonAndDescription}]
                      retain];
         }
 
