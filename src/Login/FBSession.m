@@ -338,6 +338,7 @@ static FBSession *g_activeSession = nil;
         case FBSessionLoginBehaviorWithFallbackToWebView:
         case FBSessionLoginBehaviorWithNoFallbackToWebView:
         case FBSessionLoginBehaviorForcingSafari:
+        case FBSessionLoginBehaviorTTTCustomSSO:
             // valid behavior; no-op.
             break;
         default:

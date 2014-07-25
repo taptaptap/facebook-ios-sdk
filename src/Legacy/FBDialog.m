@@ -416,6 +416,7 @@ static BOOL FBIsDeviceIPad() {
     [_modalBackgroundView addSubview:self];
     [window addSubview:_modalBackgroundView];
 
+    /* TapTapTap: Disable animations
     self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
     [UIView beginAnimations:nil context:nil];
     [UIView setAnimationDuration:kTransitionDuration/1.5];
@@ -423,6 +424,7 @@ static BOOL FBIsDeviceIPad() {
     [UIView setAnimationDidStopSelector:@selector(bounce1AnimationStopped)];
     self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);
     [UIView commitAnimations];
+     */
 
     _everShown = YES;
     [self dialogWillAppear];
