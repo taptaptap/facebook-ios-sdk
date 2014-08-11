@@ -63,7 +63,7 @@ FB_SDK_UNIVERSAL_BINARY=$FB_SDK_BUILD/${BUILDCONFIGURATION}-universal/$FB_SDK_BI
 progress_message Building Bolts
 
 # -----------------------------------------------------------------------------
-$BOLTS_SCRIPT/build_framework.sh || die "Could not build Bolts."
+#"${BOLTS_SCRIPT}/build_framework.sh" || die "Could not build Bolts."
 
 # -----------------------------------------------------------------------------
 
@@ -72,12 +72,15 @@ progress_message Building Framework.
 # -----------------------------------------------------------------------------
 # Compile binaries 
 #
+echo "FB_SDK_BUILD: $FB_SDK_BUILD"
 test -d "$FB_SDK_BUILD" \
   || mkdir -p "$FB_SDK_BUILD" \
   || die "Could not create directory $FB_SDK_BUILD"
 
+echo "FB_SDK_SRC: $FB_SDK_SRC"
 cd "$FB_SDK_SRC"
 function xcode_build_target() {
+  XCTOOL=xcodebuild
   echo "Compiling for platform: ${1} (${2}, ${3})."
   "$XCTOOL" \
     -project facebook-ios-sdk.xcodeproj \
