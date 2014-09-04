@@ -412,9 +412,14 @@ static BOOL FBIsDeviceIPad() {
                 break;
         }
     }
+    
+    /*
+     tap tap tap: we have our own modal background, this breaks the UI when we cancel the login
+     
     _modalBackgroundView.frame = window.frame;
     [_modalBackgroundView addSubview:self];
     [window addSubview:_modalBackgroundView];
+     */
 
     /* TapTapTap: Disable animations
     self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
