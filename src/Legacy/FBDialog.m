@@ -25,9 +25,12 @@
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 // global
 
+//TapShare mod: unused in mod
+/*
 static CGFloat kBorderGray[4] = {0.3, 0.3, 0.3, 0.8};
 static CGFloat kBorderBlack[4] = {0.3, 0.3, 0.3, 1};
-
+*/
+ 
 static CGFloat kTransitionDuration = 0.3;
 
 static CGFloat kPadding = 0;
@@ -372,7 +375,11 @@ static BOOL FBUseLegacyLayout(void) {
         _closeButton.showsTouchWhenHighlighted = YES;
         _closeButton.autoresizingMask = UIViewAutoresizingFlexibleRightMargin
         | UIViewAutoresizingFlexibleBottomMargin;
+        
+        //TapShare mod: we have our own close button
+        /*
         [self addSubview:_closeButton];
+         */
 
         _spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:
                     UIActivityIndicatorViewStyleWhiteLarge];
@@ -408,6 +415,8 @@ static BOOL FBUseLegacyLayout(void) {
 // UIView
 
 - (void)drawRect:(CGRect)rect {
+    //TapShare mod: No border
+    /*
     [self drawRect:rect fill:kBorderGray radius:0];
 
     CGRect webRect = CGRectMake(
@@ -415,21 +424,32 @@ static BOOL FBUseLegacyLayout(void) {
                                 rect.size.width - kBorderWidth * 2, _webView.frame.size.height+1);
 
     [self strokeLines:webRect stroke:kBorderBlack];
+     */
 }
 
 // Display the dialog's WebView with a slick pop-up animation
 - (void)showWebView {
     UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    //TapShare mod: Our popups are not at UIWindowLevelNormal
+    /*
     if (window.windowLevel != UIWindowLevelNormal) {
         for(window in [UIApplication sharedApplication].windows) {
             if (window.windowLevel == UIWindowLevelNormal)
                 break;
         }
     }
+     */
+    
+    //TapShare mod: We have our own background
+    [window addSubview:self];
+    /*
     _modalBackgroundView.frame = window.frame;
     [_modalBackgroundView addSubview:self];
     [window addSubview:_modalBackgroundView];
+     */
 
+    //TapShare mod: No bouncing animation
+    /*
     self.transform = CGAffineTransformScale([self transformForOrientation], 0.001, 0.001);
     [UIView beginAnimations:nil context:nil];
     [UIView setAnimationDuration:kTransitionDuration/1.5];
@@ -437,6 +457,7 @@ static BOOL FBUseLegacyLayout(void) {
     [UIView setAnimationDidStopSelector:@selector(bounce1AnimationStopped)];
     self.transform = CGAffineTransformScale([self transformForOrientation], 1.1, 1.1);
     [UIView commitAnimations];
+     */
 
     _everShown = YES;
     [self dialogWillAppear];
@@ -644,7 +665,10 @@ static BOOL FBUseLegacyLayout(void) {
     [self load];
     [self sizeToFitOrientation:NO];
 
+    //TapShare mod: Custom content size
+    /*
     CGFloat innerWidth = self.frame.size.width - (kBorderWidth+1)*2;
+    */
     [_closeButton sizeToFit];
 
     _closeButton.frame = CGRectMake(
@@ -653,11 +677,18 @@ static BOOL FBUseLegacyLayout(void) {
                                     29,
                                     29);
 
+    //TapShare mod: Custom content size
+    self.frame = CGRectMake(0, 0, 278, 429+30);
+    UIWindow *window = [UIApplication sharedApplication].keyWindow;
+    self.center = CGPointMake(window.center.x, window.center.y-10);
+    _webView.frame = CGRectMake(0, 0, 278, 429+30);
+    /*
     _webView.frame = CGRectMake(
                                 kBorderWidth+1,
                                 kBorderWidth+1,
                                 innerWidth,
                                 self.frame.size.height - (1 + kBorderWidth * 2));
+     */
 
     if (!_isViewInvisible) {
         [self showSpinner];
