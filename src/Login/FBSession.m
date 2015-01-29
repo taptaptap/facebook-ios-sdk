@@ -1373,12 +1373,50 @@ static FBSession *g_activeSession = nil;
     return canOpen;
 }
 
+//TapShare mod: cookie utilities (TODO)
+
+-(NSString*)cookieStorageKey {
+    return [NSString stringWithFormat:@"facebook-cookies-%@",self.tokenCachingStrategy.tokenInformationKeyName];
+}
+
+-(void)saveCookies {
+    NSMutableArray *cookieArray = [[NSMutableArray alloc] init];
+    
+    for (NSHTTPCookie *cookie in [[NSHTTPCookieStorage sharedHTTPCookieStorage] cookies]) {
+        NSMutableDictionary *cookieProperties = [NSMutableDictionary dictionary];
+        [cookieProperties setObject:cookie.name forKey:NSHTTPCookieName];
+        [cookieProperties setObject:cookie.value forKey:NSHTTPCookieValue];
+        [cookieProperties setObject:cookie.domain forKey:NSHTTPCookieDomain];
+        [cookieProperties setObject:cookie.path forKey:NSHTTPCookiePath];
+        [cookieProperties setObject:[NSNumber numberWithLong:cookie.version] forKey:NSHTTPCookieVersion];
+        [cookieProperties setObject:[[NSDate date] dateByAddingTimeInterval:2629743] forKey:NSHTTPCookieExpires];
+        [cookieArray addObject:cookieProperties];
+    }
+    
+    [[NSUserDefaults standardUserDefaults] setValue:cookieArray forKey:[self cookieStorageKey]];
+    [[NSUserDefaults standardUserDefaults] synchronize];
+}
+
+-(void)restoreCookies {
+    [FBUtility deleteFacebookCookies];
+    
+    NSMutableArray* cookieArray = [[NSUserDefaults standardUserDefaults] valueForKey:[self cookieStorageKey]];
+    for (int i=0; i < cookieArray.count; i++) {
+        NSMutableDictionary* cookieDictionary = cookieArray[i];
+        NSHTTPCookie *cookie = [NSHTTPCookie cookieWithProperties:cookieDictionary];
+        [[NSHTTPCookieStorage sharedHTTPCookieStorage] setCookie:cookie];
+    }
+}
+
 - (void)authorizeUsingLoginDialog:(NSMutableDictionary *)params {
     // add a timestamp for tracking GDP e2e time
     [FBSessionUtility addWebLoginStartTimeToParams:params];
 
     NSString *loginDialogURL = [[FBUtility dialogBaseURL] stringByAppendingString:FBLoginDialogMethod];
-
+    
+    //TapShare mod: Restore cookies
+    [self restoreCookies];
+    
     // open an inline login dialog. This will require the user to enter his or her credentials.
     self.loginDialog = [[[FBLoginDialog alloc] initWithURL:loginDialogURL
                                                loginParams:params
@@ -1923,6 +1961,9 @@ static FBSession *g_activeSession = nil;
     // no reason to keep this object
     self.loginDialog = nil;
 
+    //TapShare mod: Save cookies
+    [self saveCookies];
+    
     if (!params[FBLoginParamsExpiresIn]) {
         NSTimeInterval expirationTimeInterval = [expirationDate timeIntervalSinceNow];
         NSMutableDictionary *paramsToPass = [[[NSMutableDictionary alloc] initWithDictionary:params] autorelease];
@@ -1937,6 +1978,9 @@ static FBSession *g_activeSession = nil;
 - (void)fbDialogNotLogin:(BOOL)cancelled {
     // done with this
     self.loginDialog = nil;
+    
+    //TapShare mod: Save cookies
+    [self saveCookies];
 
     NSString *reason =
     cancelled ? FBErrorLoginFailedReasonInlineCancelledValue : FBErrorLoginFailedReasonInlineNotCancelledValue;

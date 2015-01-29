@@ -80,6 +80,11 @@ NSString *const FBTokenInformationUUIDKey = @"com.facebook.sdk:TokenInformationU
     return self;
 }
 
+//TapShare mod: expose token so we can save cookies
+-(NSString*)tokenInformationKeyName {
+    return _accessTokenInformationKeyName;
+}
+
 - (void)dealloc {
     // let-em go
     [_accessTokenInformationKeyName release];

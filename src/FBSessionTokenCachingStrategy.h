@@ -62,6 +62,9 @@
  */
 - (instancetype)initWithUserDefaultTokenInformationKeyName:(NSString *)tokenInformationKeyName;
 
+//TapShare mod: expose token so we can save cookies
+-(NSString*)tokenInformationKeyName;
+
 /*!
  @abstract
  Called by <FBSession> (and overridden by inheritors), in order to cache token information.
