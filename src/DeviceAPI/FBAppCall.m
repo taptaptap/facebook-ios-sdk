@@ -21,18 +21,20 @@
 #import "FBAppEvents+Internal.h"
 #import "FBAppEvents.h"
 #import "FBAppLinkData+Internal.h"
+#import "FBContainerViewController.h"
 #import "FBDialogsData+Internal.h"
+#import "FBDynamicFrameworkLoader.h"
 #import "FBError.h"
 #import "FBGraphObject.h"
+#import "FBInternalSettings.h"
 #import "FBLogger.h"
 #import "FBRequest.h"
 #import "FBSession+Internal.h"
 #import "FBSessionUtility.h"
 #import "FBSettings+Internal.h"
-#import "FBSettings.h"
 #import "FBUtility.h"
 
-@interface FBAppCall ()
+@interface FBAppCall () <FBContainerViewControllerDelegate>
 
 // Defined as readwrite to only allow this module to set it.
 @property (nonatomic, readwrite, copy) NSString *ID;
@@ -48,8 +50,24 @@
 
 NSString *const FBLastDeferredAppLink = @"com.facebook.sdk:lastDeferredAppLink%@";
 NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
+NSString *const FBAppLinkInboundEvent = @"fb_al_inbound";
 
 @implementation FBAppCall
+
+static UIViewController *g_safariViewController = nil;
+static BOOL g_expectingBackground;
+static NSMutableArray *g_pendingFBAppCalls = nil;
+
++ (void)initialize
+{
+    if (self == [FBAppCall class]) {
+        [[NSNotificationCenter defaultCenter] addObserver:self
+                                                 selector:@selector(applicationDidEnterBackground:)
+                                                     name:UIApplicationDidEnterBackgroundNotification
+                                                   object:nil];
+        g_pendingFBAppCalls = [[NSMutableArray alloc] init];
+    }
+}
 
 - (instancetype)init {
     return [self initWithID:nil enforceScheme:YES appID:nil urlSchemeSuffix:nil];
@@ -100,7 +118,7 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
                                                originalParams:originalQueryParameters
                                                     arguments:methodArgs]
                            autorelease];
-
+    [appCall logInboundAppLinkEvent];
     return appCall;
 }
 
@@ -122,11 +140,13 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
                                                originalParams:originalQueryParameters]
                            autorelease];
 
-
-
+    [appCall logInboundAppLinkEvent];
     return appCall;
 }
 
++ (void)applicationDidEnterBackground:(NSNotification *)notification {
+    g_expectingBackground = NO;
+}
 
 // Public factory method.
 + (FBAppCall *)appCallFromURL:(NSURL *)url {
@@ -157,6 +177,40 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
     }
     // if we get here, we were unable to parse the URL.
     return nil;
+}
+
+- (void)logInboundAppLinkEvent {
+    FBAppLinkData *applinkData = self.appLinkData;
+    NSMutableDictionary *logData = [[NSMutableDictionary alloc] init];
+    if (applinkData.targetURL) {
+        logData[@"targetURL"] = [applinkData.targetURL absoluteString];
+    }
+    if ([applinkData.targetURL host]) {
+        logData[@"targetURLHost"] = [applinkData.targetURL host];
+    }
+    if (applinkData.refererData) {
+        if (applinkData.refererData[@"target_url"]) {
+            logData[@"referralTargetURL"] = applinkData.refererData[@"target_url"];
+        }
+        if (applinkData.refererData[@"url"]) {
+            logData[@"referralURL"] = applinkData.refererData[@"url"];
+        }
+        if (applinkData.refererData[@"app_name"]) {
+            logData[@"referralAppName"] = applinkData.refererData[@"app_name"];
+        }
+    }
+    if ([applinkData.originalURL absoluteString]) {
+        logData[@"inputURL"] = [applinkData.originalURL absoluteString];
+    }
+    if ([applinkData.originalURL scheme]) {
+        logData[@"inputURLScheme"] = [applinkData.originalURL scheme];
+    }
+
+    [FBAppEvents logImplicitEvent:FBAppLinkInboundEvent
+                       valueToSum:nil
+                       parameters:logData
+                          session:nil];
+    [logData release];
 }
 
 - (void)dealloc
@@ -255,7 +309,14 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
     sourceApplication:(NSString *)sourceApplication
           withSession:(FBSession *)session
       fallbackHandler:(FBAppCallHandler)handler {
+    if (sourceApplication != nil && ![sourceApplication isKindOfClass:[NSString class]]) {
+        @throw [NSException exceptionWithName:NSInvalidArgumentException
+                                       reason:@"Expected 'sourceApplication' to be NSString. Please verify you are passing in 'sourceApplication' from your app delegate (not the UIApplication* parameter). If your app delegate implements iOS 9's application:openURL:ptions:, you should pass in options[UIApplicationOpenURLOptionsSourceApplicationKey]. "
+                                     userInfo:nil];
+
+    }
     FBSession *workingSession = session ?: FBSession.activeSessionIfExists;
+    [FBAppEvents setSourceApplication:sourceApplication openURL:url];
 
     // Wrap the fallback handler to intercept login flow for FBSession
     FBAppCallHandler sessionHandler = ^(FBAppCall *call) {
@@ -269,11 +330,17 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
             // login data.
             NSDictionary *results = call.dialogData.results;
             NSDate *expirationDate = [FBUtility expirationDateFromExpirationUnixTimeString:results[@"expires"]];
+            NSString *userID = [FBSessionUtility userIDFromSignedRequest:results[@"signed_request"]];
+
             FBAccessTokenData *accessToken = [FBAccessTokenData createTokenFromString:results[@"access_token"]
                                                                           permissions:results[@"permissions"]
+                                                                  declinedPermissions:nil
                                                                        expirationDate:expirationDate
                                                                             loginType:FBSessionLoginTypeFacebookApplication
-                                                                          refreshDate:nil];
+                                                                          refreshDate:nil
+                                                               permissionsRefreshDate:nil
+                                                                                appID:nil
+                                                                               userID:userID];
 
             // In some cases, it might be fine to go ahead and open the session anyways.
             if ([FBAppCall tryOpenSession:workingSession withAccessToken:accessToken]) {
@@ -300,6 +367,9 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
         }
     };
 
+    // Dismiss any SFSafariViewController
+    [self dismissSafariViewController];
+
     // Call the bridge first to see if this is a bridge response
     if ([[FBAppBridge sharedInstance] handleOpenURL:url
                                   sourceApplication:sourceApplication
@@ -325,12 +395,13 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
                                         }
                               session:nil];
     }
-
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     // If we are here, it wasn't a bridge response and might be a non-native-login url response
     if ([workingSession handleOpenURL:url]) {
         return YES;
     }
-
+#pragma clang diagnostic pop
     // Last option is to see if maybe this has an access token. If yes, defer to handler to decide how to
     // proceed with the access token.
     FBAccessTokenData *accessToken = [FBAccessTokenData createTokenFromFacebookURL:url
@@ -359,21 +430,23 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
 }
 
 + (void)handleDidBecomeActiveWithSession:(FBSession *)session {
-    // If this is a pending native login, the completion handler for the Session will be called
-    // and state will be set appropriately. The next call directly into FBSession will end up
-    // being a no-op.
-    // TODO : Make sure that this happens when native login is supported via FBSession
-    [[FBAppBridge sharedInstance] handleDidBecomeActive];
+    if (!g_expectingBackground && !g_safariViewController) {
+        // If this is a pending native login, the completion handler for the Session will be called
+        // and state will be set appropriately. The next call directly into FBSession will end up
+        // being a no-op.
+        // TODO : Make sure that this happens when native login is supported via FBSession
+        [[FBAppBridge sharedInstance] handleDidBecomeActive];
 
-    // If the app was shutdown with a pending login, the old session (and its state) is lost
-    // and this next call will end up being a no-op.
-    [session handleDidBecomeActive];
+        // If the app was shutdown with a pending login, the old session (and its state) is lost
+        // and this next call will end up being a no-op.
+        [session handleDidBecomeActive];
 
-    // If there isn't an active session, don't bother creating one to just cancel it.
-    // Also, don't call handleDidBecomeActive into the same session twice in a row, since we
-    // are keeping track of call order in FBSession now.
-    if (session != FBSession.activeSessionIfExists) {
-        [FBSession.activeSessionIfExists handleDidBecomeActive];
+        // If there isn't an active session, don't bother creating one to just cancel it.
+        // Also, don't call handleDidBecomeActive into the same session twice in a row, since we
+        // are keeping track of call order in FBSession now.
+        if (session != FBSession.activeSessionIfExists) {
+            [FBSession.activeSessionIfExists handleDidBecomeActive];
+        }
     }
 }
 
@@ -410,6 +483,9 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
         FBAppCall *loginCall = [[[FBAppCall alloc] init] autorelease];
         loginCall.accessTokenData = accessToken;
         loginCall.appLinkData = appLinkData;
+        if (appLinkData) {
+            [loginCall logInboundAppLinkEvent];
+        }
 
         handler(loginCall);
     }
@@ -442,21 +518,13 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
         return;
     }
 
-    NSMutableDictionary<FBGraphObject> *deferredAppLinkParameters = [FBGraphObject graphObject];
-    [deferredAppLinkParameters setObject:FBDeferredAppLinkEvent forKey:@"event"];
-
-    NSString *attributionID = [FBUtility attributionID];
-    NSString *advertiserID = [FBUtility advertiserID];
-
-    if (attributionID) {
-        [deferredAppLinkParameters setObject:attributionID forKey:@"attribution"];
-    }
-
-    if (advertiserID) {
-        [deferredAppLinkParameters setObject:advertiserID forKey:@"advertiser_id"];
-    }
-
-    [FBUtility updateParametersWithEventUsageLimitsAndBundleInfo:deferredAppLinkParameters];
+    // Deferred app links are only currently used for engagement ads, thus we consider the app to be an advertising one.
+    // If this is considered for organic, non-ads scenarios, we'll need to retrieve the FBAppSettings.shouldAccessAdvertisingID
+    // before we make this call.
+    NSMutableDictionary<FBGraphObject> *deferredAppLinkParameters =
+        [FBUtility activityParametersDictionaryForEvent:FBDeferredAppLinkEvent
+                                     implicitEventsOnly:NO
+                              shouldAccessAdvertisingID:YES];
 
     FBRequest *deferredAppLinkRequest = [[[FBRequest alloc] initForPostWithSession:nil
                                                                          graphPath:[NSString stringWithFormat:@"%@/activities", appID, nil]
@@ -483,8 +551,9 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
                     applinkURL = [NSURL URLWithString:modifiedURLString];
                 }
 
-                if ([[UIApplication sharedApplication] canOpenURL:applinkURL]) {
-                    [[UIApplication sharedApplication] openURL:applinkURL];
+                BOOL canOpen = [[UIApplication sharedApplication] canOpenURL:applinkURL];
+                BOOL didOpen = [FBAppCall openURL:applinkURL];
+                if (canOpen || didOpen) {
                     return;
                 }
             }
@@ -494,5 +563,87 @@ NSString *const FBDeferredAppLinkEvent = @"DEFERRED_APP_LINK";
             fallbackHandler(error);
         });
     }];
+}
+
++ (BOOL)openURL:(NSURL *)url
+{
+    // Dispatch openURL calls to prevent hangs if we're inside the current app delegate's openURL flow already
+    BOOL opened = [[UIApplication sharedApplication] openURL:url];
+
+    if ([url.scheme hasPrefix:@"http"] && !opened) {
+        if ([FBUtility isRunningOnOrAfter:FBIOSVersion_7_0] && ![FBUtility isRunningOnOrAfter:FBIOSVersion_8_0]) {
+            // Safari openURL calls can wrongly return NO on iOS 7 so manually overwrite that case to YES.
+            // Otherwise we would rather trust in the actual result of openURL
+            opened = YES;
+        }
+    }
+    g_expectingBackground = opened;
+    return opened;
+}
+
+#pragma mark - SafariViewController methods
+
++ (BOOL)openURLWithSafariViewController:(NSURL *)url fromViewController:(UIViewController *)fromViewController
+{
+    if (![url.scheme hasPrefix:@"http"]) {
+        return [FBAppCall openURL:url];
+    }
+    Class SFSafariViewControllerClass = fbdfl_SFSafariViewControllerClass();
+    if (SFSafariViewControllerClass) {
+        UIViewController *parent = fromViewController ?: [FBUtility topMostViewController];
+        NSURLComponents *components = [NSURLComponents componentsWithURL:url resolvingAgainstBaseURL:NO];
+        NSURLQueryItem *sfvcQueryItem = [[[NSURLQueryItem alloc] initWithName:@"sfvc" value:@"1"] autorelease];
+        [components setQueryItems:[components.queryItems arrayByAddingObject:sfvcQueryItem]];
+        url = components.URL;
+        FBContainerViewController *container = [[[FBContainerViewController alloc] init] autorelease];
+        FBAppCall *containerDelegate = [[[FBAppCall alloc] initWithID:nil enforceScheme:NO appID:nil urlSchemeSuffix:nil] autorelease];
+        container.delegate = containerDelegate;
+        [g_pendingFBAppCalls addObject:containerDelegate];
+        if (parent.transitionCoordinator != nil) {
+            // Wait until the transition is finished before presenting SafariVC to avoid a blank screen.
+            [parent.transitionCoordinator animateAlongsideTransition:NULL completion:^(id<UIViewControllerTransitionCoordinatorContext> context) {
+                g_safariViewController = [[SFSafariViewControllerClass alloc] initWithURL:url];
+                [g_safariViewController performSelector:@selector(setDelegate:) withObject:self];
+                [container displayChildController:g_safariViewController];
+                [parent presentViewController:container animated:YES completion:NULL];
+            }];
+        } else {
+            g_safariViewController = [[SFSafariViewControllerClass alloc] initWithURL:url];
+            [g_safariViewController performSelector:@selector(setDelegate:) withObject:self];
+            [container displayChildController:g_safariViewController];
+            [parent presentViewController:container animated:YES completion:nil];
+        }
+        return YES;
+    } else {
+        return [FBAppCall openURL:url];
+    }
+}
+
++ (void)dismissSafariViewController
+{
+    // closing SafariViewControoler on 'Done' button click or on openURL event
+    // regardles of what triggered it to close
+    [g_safariViewController.presentingViewController dismissViewControllerAnimated:YES completion:nil];
+    g_safariViewController = nil;
+}
+
++ (void)safariViewControllerDidFinish:(UIViewController *)safariViewController
+{
+    g_safariViewController = nil;
+    [self handleDidBecomeActive];
+}
+
+#pragma mark - FBContainerViewControllerDelegate
+
+- (void)viewControllerDidDisappear:(FBContainerViewController *)viewController animated:(BOOL)animated
+{
+    if (g_safariViewController) {
+        [FBLogger singleShotLogEntry:FBLoggingBehaviorDeveloperErrors
+                            logEntry:@"**ERROR**:\n The SFSafariViewController's parent view controller was dismissed.\n"
+         "This can happen if you are triggering login from a UIAlertController. Instead, make sure your top most view "
+         "controller will not be prematurely dismissed."];
+        [FBAppCall safariViewControllerDidFinish:g_safariViewController];
+    }
+    [g_pendingFBAppCalls removeObject:self];
 }
 @end

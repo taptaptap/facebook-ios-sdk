@@ -14,54 +14,62 @@
  * limitations under the License.
  */
 
-#import "FBSession+Internal.h"
-#import "FBSessionIntegrationTests.h"
-#import "FBTestSession.h"
-#import "FBRequest.h"
-#import "FBGraphUser.h"
-#import "FBTestBlocker.h"
-#import "FBUtility.h"
 #import "FBError.h"
+#import "FBGraphUser.h"
+#import "FBIntegrationTests.h"
+#import "FBRequest.h"
+#import "FBSession+Internal.h"
 #import "FBSessionTokenCachingStrategy.h"
+#import "FBInternalSettings.h"
+#import "FBTestBlocker.h"
+#import "FBTestUserSession.h"
+#import "FBUtility.h"
 
 #if defined(FACEBOOKSDK_SKIP_SESSION_TESTS)
 
-#pragma message ("warning: Skipping FBSessionTests")
+#pragma message ("warning: Skipping FBSessionIntegrationTests")
 
 #else
 
+@interface FBRequestConnection (FBSessionIntegrationTests)
++ (void)addRequestToRefreshPermissionsSession:(FBSession *)session connection:(FBRequestConnection *)connection;
+@end
+
 #pragma mark - Test suite
+
+@interface FBSessionIntegrationTests : FBIntegrationTests
+@end
 
 @implementation FBSessionIntegrationTests
 
 - (void)testSessionBasic
 {
-    FBConditionalLog(NO, @"Testing conditional %@", @"log");
-    FBConditionalLog(NO, @"Testing conditional log");
-    FBConditionalLog(YES, nil, @"Testing conditional log");
+    FBConditionalLog(NO, FBLoggingBehaviorInformational, @"Testing conditional %@", @"log");
+    FBConditionalLog(NO, FBLoggingBehaviorInformational, @"Testing conditional log");
+    FBConditionalLog(YES, FBLoggingBehaviorInformational, @"%@", @"Testing conditional log");
 
     // create valid
     FBTestBlocker *blocker = [[[FBTestBlocker alloc] init] autorelease];
 
-    FBTestSession *session = [FBTestSession sessionWithSharedUserWithPermissions:nil];
-    [session openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    FBTestUserSession *session = [self getTestSessionWithPermissions:nil];
+    [session openWithCompletionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         [blocker signal];
-    }];
+    } fromViewController:nil];
 
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
-    STAssertTrue(session.isOpen, @"Session should be valid, and is not");
+    XCTAssertTrue(session.isOpen, @"Session should be valid, and is not");
 
     FBRequest *request = [[[FBRequest alloc] initWithSession:session
                                                    graphPath:@"me"]
                           autorelease];
     [request startWithCompletionHandler:
      ^(FBRequestConnection *connection, id<FBGraphUser> me, NSError *error) {
-         STAssertTrue(me.id.length > 0, @"user id should be non-empty");
+         XCTAssertTrue(me.objectID.length > 0, @"user id should be non-empty");
          [blocker signal];
      }];
 
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     [session close];
 }
@@ -72,16 +80,17 @@
     FBTestBlocker *blocker = [[[FBTestBlocker alloc] init] autorelease];
 
     __block BOOL wasNotifiedOfInvalid = NO;
-    FBTestSession *session = [FBTestSession sessionWithPrivateUserWithPermissions:nil];
-    [session openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    // specify a permission to make sure we don't get the special open graph test user.
+    FBTestUserSession *session = [self getTestSessionWithPermissions:@[@"user_likes"]];
+    [session openWithCompletionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         if (status == FBSessionStateClosed) {
             wasNotifiedOfInvalid = YES;
         }
         [blocker signal];
-    }];
-    [blocker wait];
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
-    STAssertTrue(session.isOpen, @"Session should be open, and is not");
+    XCTAssertTrue(session.isOpen, @"Session should be open, and is not");
 
     __block NSString *userID = nil;
     FBRequest *request1 = [[[FBRequest alloc] initWithSession:session
@@ -89,12 +98,12 @@
                            autorelease];
     [request1 startWithCompletionHandler:
      ^(FBRequestConnection *connection, id<FBGraphUser> me, NSError *error) {
-         userID = [me.id retain];
-         STAssertTrue(userID.length > 0, @"user id should be non-empty");
+         userID = [me.objectID retain];
+         XCTAssertTrue(userID.length > 0, @"user id should be non-empty");
          [blocker signal];
      }];
 
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     // use FBRequest to create an NSURLRequest
     FBRequest *temp = [[FBRequest alloc] initWithSession:session
@@ -121,20 +130,22 @@
     NSString *body = !data ? nil : [[[NSString alloc] initWithData:data
                                                           encoding:NSUTF8StringEncoding]
                                     autorelease];
-    STAssertTrue([body isEqualToString:@"true"], @"body should return 'true'");
+
+    NSDictionary *jsonResponse = [FBUtility simpleJSONDecode:body];
+    XCTAssertTrue([[jsonResponse valueForKey:@"success"] boolValue] == YES, @"body should return JSON {\"success\": true}");
 
     FBRequest *request2 = [[[FBRequest alloc] initWithSession:session
                                                     graphPath:@"me"]
                            autorelease];
     [request2 startWithCompletionHandler:
-     ^(FBRequestConnection *connection, id<FBGraphUser> me, NSError *error) {
-         STAssertTrue(error != nil, @"response should be an error due to deleted user");
+     ^(FBRequestConnection *innerConnection, id<FBGraphUser> me, NSError *innerError) {
+         XCTAssertTrue(innerError != nil, @"response should be an error due to deleted user");
          [blocker signal];
      }];
 
-    STAssertFalse(wasNotifiedOfInvalid, @"should not have invalidated the token yet");
-    [blocker wait];
-    STAssertTrue(wasNotifiedOfInvalid, @"should have invalidated the token by now");
+    XCTAssertFalse(wasNotifiedOfInvalid, @"should not have invalidated the token yet");
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
+    XCTAssertTrue(wasNotifiedOfInvalid, @"should have invalidated the token by now");
 
     [session close];
 }
@@ -145,12 +156,12 @@
     __block BOOL expectClosed = NO;
 
     // Open a test session normally for accesstoken/appid
-    FBTestSession *normalSession = [FBTestSession sessionWithPrivateUserWithPermissions:nil];
+    FBTestUserSession *normalSession = [self getTestSessionWithPermissions:nil];
     [normalSession openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-        STAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        XCTAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
         [blocker signal];
-    }];
-    [blocker wait];
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     // Now construct the actual session under test (target) and open with the access token.
     // Note just hack in expiration time of 3600 for the test.
@@ -162,11 +173,14 @@
     FBAccessTokenData *tokenDataCopy = [normalSession.accessTokenData copy];
     BOOL openResult = [target openFromAccessTokenData:tokenDataCopy
                                     completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                                        STAssertTrue(status == FBSessionStateOpen || expectClosed, @"status is :%d , error:%@:", status, error);
+                                        XCTAssertTrue(status == FBSessionStateOpen || expectClosed,
+                                                      @"status is :%lu , error:%@:",
+                                                      (unsigned long)status,
+                                                      error);
                                         [blocker signal];
                                     }];
-    STAssertTrue(openResult, @"expected openResult=YES");
-    [blocker wait];
+    XCTAssertTrue(openResult, @"expected openResult=YES");
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     //final check, just do a request for me with the target
     FBRequest *request = [[[FBRequest alloc] initWithSession:target
@@ -174,11 +188,11 @@
                           autorelease];
     [request startWithCompletionHandler:
      ^(FBRequestConnection *connection, id<FBGraphUser> me, NSError *error) {
-         STAssertTrue(me.id.length > 0, @"user id should be non-empty. error:%@", error);
+         XCTAssertTrue(me.objectID.length > 0, @"user id should be non-empty. error:%@", error);
          [blocker signal];
      }];
 
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     expectClosed = YES;
     [target close];
@@ -193,22 +207,22 @@
     __block BOOL expectClosed = NO;
 
     // Open a test session normally for accesstoken/appid
-    FBTestSession *target = [FBTestSession sessionWithPrivateUserWithPermissions:nil];
+    FBTestUserSession *target = [self getTestSessionWithPermissions:nil];
     [target openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-        STAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        XCTAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
         [blocker signal];
-    }];
-    [blocker wait];
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     FBAccessTokenData *tokenDataCopy = [target.accessTokenData copy];
 
     //Now try to open it again
-    STAssertThrowsSpecific([target openFromAccessTokenData:tokenDataCopy
-                                         completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                                             STFail(@"Completion handler was unexpectedly invoked for session: %@", session);
-                                         }],
-                           NSException,
-                           FBInvalidOperationException);
+    XCTAssertThrowsSpecificNamed([target openFromAccessTokenData:tokenDataCopy
+                                               completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+                                                   XCTFail(@"Completion handler was unexpectedly invoked for session: %@", session);
+                                               }],
+                                 NSException,
+                                 FBInvalidOperationException);
 
     [tokenDataCopy release];
 }
@@ -219,13 +233,42 @@
     __block BOOL expectClosed = NO;
 
     // Open a test session normally for accesstoken/appid
-    FBTestSession *normalSession = [FBTestSession sessionWithPrivateUserWithPermissions:nil];
+    FBTestUserSession *normalSession = [self getTestSessionWithPermissions:nil];
     [normalSession openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-        STAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        XCTAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        [blocker signal];
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:60], @"blocker timed out");
+    XCTAssertTrue([normalSession shouldRefreshPermissions], @"expected need for permissions refresh");
+
+    expectClosed = YES;
+    [normalSession close];
+}
+
+- (void)testSessionOpenThenRefreshPermissions
+{
+    FBTestBlocker *blocker = [[[FBTestBlocker alloc] init] autorelease];
+    __block BOOL expectClosed = NO;
+
+    // Open a test session normally for accesstoken/appid
+    FBTestUserSession *normalSession = [self getTestSessionWithPermissions:nil];
+    [normalSession openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+        XCTAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        [blocker signal];
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:60], @"blocker timed out");
+
+    // Now ask for permissions refresh, and verify that the piggyback will not be added.
+    id mockConnection = [OCMockObject niceMockForClass:[FBRequestConnection class]];
+    [[mockConnection reject] addRequestToRefreshPermissionsSession:OCMOCK_ANY connection:OCMOCK_ANY];
+
+    blocker = [[[FBTestBlocker alloc] init] autorelease];
+    [normalSession refreshPermissionsWithCompletionHandler:^(FBSession *session, NSError *error) {
+        XCTAssertNil(error, @"unexpected error refreshing permissions");
         [blocker signal];
     }];
-    STAssertTrue([blocker waitWithTimeout:60], @"blocker timed out");
-    STAssertTrue([normalSession shouldRefreshPermissions], @"expected need for permissions refresh");
+    XCTAssertTrue([blocker waitWithTimeout:20], @"blocker timed out for permissions refresh");
+    [mockConnection verify];
 
     expectClosed = YES;
     [normalSession close];
@@ -237,12 +280,12 @@
     __block BOOL expectClosed = NO;
 
     // Open a test session normally for accesstoken/appid
-    FBTestSession *normalSession = [FBTestSession sessionWithPrivateUserWithPermissions:nil];
+    FBTestUserSession *normalSession = [self getTestSessionWithPermissions:nil];
     [normalSession openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-        STAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
+        XCTAssertTrue(session.state == FBSessionStateOpen || expectClosed, @"Expected open session: %@, %@", session, error);
         [blocker signal];
-    }];
-    STAssertTrue([blocker waitWithTimeout:60], @"blocker timed out");
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:60], @"blocker timed out");
 
     // Now construct the actual session under test (target) and open with the access token.
     // Note just hack in expiration time of 3600 for the test.
@@ -254,14 +297,17 @@
     FBAccessTokenData *tokenDataCopy = [normalSession.accessTokenData copy];
     BOOL openResult = [target openFromAccessTokenData:tokenDataCopy
                                     completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                                        STAssertTrue(status == FBSessionStateOpen || expectClosed, @"status is :%d , error:%@:", status, error);
+                                        XCTAssertTrue(status == FBSessionStateOpen || expectClosed,
+                                                      @"status is :%lu, error:%@:",
+                                                      (unsigned long)status,
+                                                      error);
                                         [blocker signal];
                                     }];
-    STAssertTrue(openResult, @"expected openResult=YES");
-    STAssertTrue([blocker waitWithTimeout:10], @"blocker timed out");
+    XCTAssertTrue(openResult, @"expected openResult=YES");
+    XCTAssertTrue([blocker waitWithTimeout:10], @"blocker timed out");
 
     // Check the refresh permissions state
-    STAssertTrue([target shouldRefreshPermissions], @"expected need for permissions refresh");
+    XCTAssertTrue([target shouldRefreshPermissions], @"expected need for permissions refresh");
 
     //now do a request for me with the target which will refresh the permissions
     FBRequest *request = [[[FBRequest alloc] initWithSession:target
@@ -269,18 +315,68 @@
                           autorelease];
     [request startWithCompletionHandler:
      ^(FBRequestConnection *connection, id<FBGraphUser> me, NSError *error) {
-         STAssertTrue(me.id.length > 0, @"user id should be non-empty. error:%@", error);
+         XCTAssertTrue(me.objectID.length > 0, @"user id should be non-empty. error:%@", error);
          [blocker signal];
      }];
 
-    STAssertTrue([blocker waitWithTimeout:30], @"blocker timed out requesting me");
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out requesting me");
 
     // now make sure the refresh permissions is satisfied.
-    STAssertFalse([target shouldRefreshPermissions], @"did NOT expect need for permissions refresh");
+    XCTAssertFalse([target shouldRefreshPermissions], @"did NOT expect need for permissions refresh");
 
     expectClosed = YES;
     [target close];
     [normalSession close];
+}
+
+- (void)testSessionOpenFromTokenAndCheckUserID
+{
+    FBConditionalLog(NO, FBLoggingBehaviorInformational, @"Testing conditional %@", @"log");
+    FBConditionalLog(NO, FBLoggingBehaviorInformational, @"Testing conditional log");
+    FBConditionalLog(YES, FBLoggingBehaviorInformational, @"%@", @"Testing conditional log");
+
+    FBTestBlocker *blocker = [[[FBTestBlocker alloc] init] autorelease];
+
+
+    // Open a test session normally for accesstoken/appid
+    FBTestUserSession *normalSession = [self getTestSessionWithPermissions:nil];
+    [normalSession openWithCompletionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+        if (status == FBSessionStateOpen) {
+            [blocker signal];
+        }
+    } fromViewController:nil];
+    XCTAssertTrue([blocker waitWithTimeout:10], @"blocker timed out");
+
+    FBAccessTokenData *token = [FBAccessTokenData createTokenFromString:normalSession.accessTokenData.accessToken
+                                                            permissions:nil
+                                                    declinedPermissions:nil
+                                                         expirationDate:[NSDate distantFuture]
+                                                              loginType:FBSessionLoginTypeFacebookApplication
+                                                            refreshDate:[NSDate dateWithTimeIntervalSince1970:0]
+                                                 permissionsRefreshDate:nil
+                                                                  appID:[self testAppId]
+                                                                 userID:@"4"];
+    FBTestUserSession *session = [FBTestUserSession sessionWithAccessTokenData:token];
+
+    [session openFromAccessTokenData:token completionHandler:^(FBSession *session3, FBSessionState status, NSError *error) {
+        if (status == FBSessionStateOpen) {
+            XCTAssertTrue([@"4" isEqualToString:session.accessTokenData.userID]);
+            [blocker signal];
+        }
+    }];
+
+    [blocker waitWithTimeout:10];
+
+    XCTAssertTrue(session.isOpen, @"Session should be valid, and is not");
+
+    [session requestNewPublishPermissions:@[@"publish_actions"] defaultAudience:FBSessionDefaultAudienceOnlyMe completionHandler:^(FBSession *session2, NSError *error) {
+        XCTAssertTrue([@"4" isEqualToString:session.accessTokenData.userID]);
+        [blocker signal];
+    }];
+    [blocker waitWithTimeout:10];
+
+    XCTAssertTrue([@"4" isEqualToString:session.accessTokenData.userID]);
+    [session close];
 }
 
 

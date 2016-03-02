@@ -15,34 +15,34 @@
  */
 
 #import "FBIntegrationTests.h"
-#import "FBTestBlocker.h"
-#import "FBRequestConnection.h"
-#import "FBRequest.h"
-#import "FBSettings.h"
-#import "FBError.h"
-#import "FBUtility.h"
+
+#import <pthread.h>
+
 #import <OCMock/OCMock.h>
-#include <pthread.h>
 
-static NSMutableDictionary *mapTestCasesToSessions;
-// Concurrency not an issue today, but guard our static global in any case.
-static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+#import "FBError.h"
+#import "FBInternalSettings.h"
+#import "FBRequest.h"
+#import "FBRequestConnection.h"
+#import "FBTestBlocker.h"
+#import "FBTestUserSession.h"
+#import "FBTestUsersManager.h"
+#import "FBUtility.h"
 
-#pragma mark Private interface
+static NSString *const FBPLISTTestAppIDKey = @"IOS_SDK_TEST_APP_ID";
+static NSString *const FBPLISTTestAppSecretKey = @"IOS_SDK_TEST_APP_SECRET";
+static NSString *const FBPLISTTestAppClientTokenKey = @"IOS_SDK_TEST_CLIENT_TOKEN";
 
-@interface FBIntegrationTests () {
-    id _mockFBUtility;
-}
-
-- (void)issueFriendRequestInSession:(FBTestSession *)session toFriend:(NSString *)userID;
-
-@end
-
-#pragma mark -
+static FBTestUsersManager *testAccountsManager;
+static NSString *gAppId;
+static NSString *gAppSecret;
+static NSString *gAppClientToken;
 
 @implementation FBIntegrationTests
 {
-    FBTestSession *_defaultTestSession;
+    FBTestUserSession *_defaultTestSession;
+    id _mockFBUtility;
+    id _mockNSBundle;
 }
 
 #pragma mark Instance-level lifecycle
@@ -53,108 +53,134 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     [super dealloc];
 }
 
++ (void)setUp {
+    NSDictionary *environment = [[NSProcessInfo processInfo] environment];
+    gAppId = [environment objectForKey:FBPLISTTestAppIDKey];
+    gAppSecret = [environment objectForKey:FBPLISTTestAppSecretKey];
+    gAppClientToken= [environment objectForKey:FBPLISTTestAppClientTokenKey];
+    if (gAppId.length == 0 || gAppSecret.length == 0 || gAppClientToken.length == 0) {
+        [[NSException exceptionWithName:FBInvalidOperationException
+                                 reason:
+          @"Integration Tests Cannot Be Run."
+          @"Missing App ID or App Secret, or Client Token in Build Settings."
+          @" You can set this in an xcconfig file containing your unit-testing Facebook"
+          @" Application's ID and Secret in this format:\n"
+          @"\tIOS_SDK_TEST_APP_ID = // your app ID, e.g.: 1234567890\n"
+          @"\tIOS_SDK_TEST_APP_SECRET = // your app secret, e.g.: 1234567890abcdef\n"
+          @"\tIOS_SDK_TEST_CLIENT_TOKEN = // your app client token, e.g.: 1234567890abcdef\n"
+          @"Do NOT release your app secret in your app"
+          @"To create a Facebook AppID, visit https://developers.facebook.com/apps"
+                               userInfo:nil]
+         raise];
+    }
+    testAccountsManager = [FBTestUsersManager sharedInstanceForAppId:gAppId appSecret:gAppSecret];
+}
 - (void)setUp
 {
     [super setUp];
-
-    pthread_mutex_lock(&mutex);
-
-    if (!mapTestCasesToSessions) {
-        mapTestCasesToSessions = [[NSMutableDictionary alloc] init];
-    }
-    [mapTestCasesToSessions setObject:[[NSMutableArray alloc] init]
-                               forKey:[NSValue valueWithNonretainedObject:self]];
-
-    pthread_mutex_unlock(&mutex);
+    self.continueAfterFailure = NO;
 
     _mockFBUtility = [[OCMockObject mockForClass:[FBUtility class]] retain];
     [[[_mockFBUtility stub] andReturn:nil] advertiserID]; //stub advertiserID since that often hangs.
+
+    _mockNSBundle = [[OCMockObject partialMockForObject:[NSBundle mainBundle]] retain];
+    [[[_mockNSBundle stub] andReturn:[[NSUUID UUID] UUIDString]] bundleIdentifier];
 }
 
 - (void)tearDown
 {
-    pthread_mutex_lock(&mutex);
-
-    NSMutableArray *sessions = [mapTestCasesToSessions objectForKey:[NSValue valueWithNonretainedObject:self]];
-    [mapTestCasesToSessions removeObjectForKey:[NSValue valueWithNonretainedObject:self]];
-
-    pthread_mutex_unlock(&mutex);
-
-    for (FBSession *session in sessions) {
-        [session close];
-    }
-    [sessions release];
-
     [_mockFBUtility release];
     _mockFBUtility = nil;
+
+    [_mockNSBundle release];
+    _mockNSBundle = nil;
 
     [super tearDown];
 }
 
 #pragma mark -
-#pragma mark FBTestSession creation helpers
+#pragma mark test session creation helpers
 
 - (NSArray *)permissionsForDefaultTestSession
 {
-    return nil;
+    return @[];
 }
 
-- (FBTestSession *)defaultTestSession
+- (FBTestUserSession *)defaultTestSession
 {
     if (!_defaultTestSession) {
-        _defaultTestSession = [self getSessionWithSharedUserWithPermissions:[self permissionsForDefaultTestSession]];
+        _defaultTestSession = (FBTestUserSession *)[self loginSession:[self getTestSessionWithPermissions:[self permissionsForDefaultTestSession]]];
     }
     return _defaultTestSession;
 }
 
-- (FBTestSession *)getSessionWithSharedUserWithPermissions:(NSArray *)permissions
+- (FBTestUserSession *)getTestSessionWithPermissions:(NSArray *)permissions
 {
-    return [self getSessionWithSharedUserWithPermissions:permissions uniqueUserTag:nil];
+    return [self getTestSessionsWithPermissions:permissions count:1][0];
 }
 
-- (FBTestSession *)getSessionWithSharedUserWithPermissions:(NSArray *)permissions
-                                             uniqueUserTag:(NSString *)uniqueUserTag
-{
-    FBTestSession *session = [FBTestSession sessionWithSharedUserWithPermissions:permissions uniqueUserTag:uniqueUserTag];
-
-    // Need to remember all the sessions for this class.
-    pthread_mutex_lock(&mutex);
-
-    NSMutableArray *sessions = [mapTestCasesToSessions objectForKey:[NSValue valueWithNonretainedObject:self]];
-    [sessions addObject:session];
-
-    pthread_mutex_unlock(&mutex);
-
-    return [self loginSession:session];
+- (NSArray *)getTestSessionsWithPermissions:(NSArray *)permissions count:(NSUInteger)count {
+    FBTestBlocker *blocker = [[FBTestBlocker alloc] initWithExpectedSignalCount:1];
+    NSMutableArray *arrayOfPermissionsArrays = [NSMutableArray array];
+    // wrap the permissions into another array and copy in case caller mutates theirs.
+    while (count > 0) {
+        [arrayOfPermissionsArrays addObject:(permissions ? [[permissions copy] autorelease] : @[] )];
+        count--;
+    }
+    __block NSMutableArray *testSessionsArray = [NSMutableArray array];
+    [testAccountsManager requestTestAccountTokensWithArraysOfPermissions:arrayOfPermissionsArrays
+                                                        createIfNotFound:YES
+                                                       completionHandler:^(NSArray *tokens, NSError *error) {
+                                                           XCTAssertNil(error, @"failed to get test users :%@", error);
+                                                           [tokens enumerateObjectsUsingBlock:^(FBAccessTokenData *obj, NSUInteger idx, BOOL *stop) {
+                                                               [testSessionsArray addObject:[FBTestUserSession sessionWithAccessTokenData:obj]];
+                                                           }];
+                                                           [blocker signal];
+                                                       }];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"timed out trying to fetch test user");
+    [blocker release];
+    return testSessionsArray;
 }
 
 #pragma mark -
 #pragma mark Miscellaneous helpers
 
-- (FBTestSession *)loginSession:(FBTestSession *)session
+- (NSString *)testAppId{
+    return gAppId;
+}
+
+- (NSString *)testAppClientToken {
+    return gAppClientToken;
+}
+
+- (NSString *)testAppSecret {
+    return gAppSecret;
+}
+
+- (FBSession *)loginSession:(FBSession *)session
 {
     __block FBTestBlocker *blocker = [[FBTestBlocker alloc] init];
 
-    FBSessionStateHandler handler = ^(FBSession *session,
+    FBSessionStateHandler handler = ^(FBSession *innerSession,
                                       FBSessionState status,
                                       NSError *error) {
-        STAssertTrue(!error, @"!error");
+        XCTAssertTrue(!error, @"!error");
 
         [blocker signal];
     };
 
-    [session openWithCompletionHandler:handler];
+    [session openWithCompletionHandler:handler fromViewController:nil];
 
     BOOL success = [blocker waitWithTimeout:60];
-    STAssertTrue(success, @"blocker timed out");
-    STAssertTrue(session.isOpen, @"session.isOpen");
+    XCTAssertTrue(success, @"blocker timed out");
+    XCTAssertTrue(session.isOpen, @"session.isOpen");
 
     return session;
 }
 
-- (void)issueFriendRequestInSession:(FBTestSession *)session toFriend:(NSString *)userID
+- (void)issueFriendRequestInSession:(FBSession *)session toFriend:(NSString *)userID
 {
-    STAssertNotNil(userID, @"missing userID");
+    XCTAssertNotNil(userID, @"missing userID");
     NSString *graphPath = [NSString stringWithFormat:@"me/friends/%@", userID];
 
     __block FBTestBlocker *blocker = [[FBTestBlocker alloc] init];
@@ -172,24 +198,28 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
              // If test users are already friends, we will get a 400.
              expected = [code integerValue] == 400;
          }
-         STAssertTrue(expected, @"unexpected result");
+         XCTAssertTrue(expected, @"unexpected result");
          [blocker signal];
      }];
 
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 }
 
-- (void)makeTestUserInSession:(FBTestSession *)session1 friendsWithTestUserInSession:(FBTestSession *)session2
+- (void)makeTestUserInSession:(FBSession *)session1 friendsWithTestUserInSession:(FBSession *)session2
 {
-    [self issueFriendRequestInSession:session1 toFriend:session2.testUserID];
-    [self issueFriendRequestInSession:session2 toFriend:session1.testUserID];
+    XCTAssertTrue(session1.accessTokenData.userID.length > 0, @"missing user id for session 1");
+    XCTAssertTrue(session2.accessTokenData.userID.length > 0, @"missing user id for session 2");
+
+    [self issueFriendRequestInSession:session1 toFriend:session2.accessTokenData.userID];
+    [self issueFriendRequestInSession:session2 toFriend:session1.accessTokenData.userID];
 }
 
 - (void)validateGraphObject:(id<FBGraphObject>)graphObject hasProperties:(NSArray *)propertyNames
 {
     for (NSString *propertyName in propertyNames) {
-        STAssertNotNil([graphObject objectForKey:propertyName],
-                       [NSString stringWithFormat:@"missing property '%@'", propertyName]);
+        XCTAssertNotNil([graphObject objectForKey:propertyName],
+                        @"missing property '%@'",
+                        propertyName);
     }
 }
 
@@ -203,8 +233,8 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
     [request startWithCompletionHandler:
      ^(FBRequestConnection *connection, id result, NSError *error) {
-         STAssertTrue(!error, @"!error");
-         STAssertTrue([idString isEqualToString:[result objectForKey:@"id"]], @"wrong id");
+         XCTAssertTrue(!error, @"!error");
+         XCTAssertTrue([idString isEqualToString:[result objectForKey:@"id"]], @"wrong id");
 
          [self validateGraphObject:result hasProperties:propertyNames];
 
@@ -225,7 +255,7 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
 
     [request startWithCompletionHandler:
      ^(FBRequestConnection *connection, id result, NSError *error) {
-         STAssertTrue(!error, @"!error");
+         XCTAssertTrue(!error, @"!error :%@", error);
          if (!error) {
              NSString *newObjectId = [result objectForKey:@"id"];
              [self validateGraphObjectWithId:newObjectId
@@ -236,7 +266,7 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
          [blocker signal];
      }];
 
-    STAssertTrue([blocker waitWithTimeout:15], @"blocker timed out");
+    XCTAssertTrue([blocker waitWithTimeout:15], @"blocker timed out");
 }
 
 // Unit tests failing? Turn on some logging with this helper.
@@ -260,8 +290,8 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
                                                            graphObject:graphObject];
     [connection addRequest:postRequest
          completionHandler:
-     ^(FBRequestConnection *connection, id result, NSError *error) {
-         STAssertTrue(!error, @"got unexpected error");
+     ^(FBRequestConnection *innerConnection, id result, NSError *error) {
+         XCTAssertTrue(!error, @"got unexpected error");
      }
             batchEntryName:@"postRequest"];
 
@@ -273,15 +303,15 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     __block FBTestBlocker *blocker = [[FBTestBlocker alloc] init];
     [connection addRequest:getRequest
          completionHandler:
-     ^(FBRequestConnection *connection, id result, NSError *error) {
-         STAssertTrue(!error, @"got unexpected error");
-         STAssertNotNil(result, @"didn't get expected result");
+     ^(FBRequestConnection *innerConnection, id result, NSError *error) {
+         XCTAssertTrue(!error, @"got unexpected error");
+         XCTAssertNotNil(result, @"didn't get expected result");
          createdObject = [result retain];
          [blocker signal];
      }];
 
     [connection start];
-    [blocker wait];
+    XCTAssertTrue([blocker waitWithTimeout:30], @"blocker timed out");
 
     [postRequest release];
     [connection release];
@@ -290,7 +320,7 @@ static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
     return [createdObject autorelease];
 }
 
-size_t getPixels(void *info, void *buffer, size_t count) {
+static size_t getPixels(void *info, void *buffer, size_t count) {
     char *c = buffer;
     for (int i = 0; i < count; ++i) {
         *c = arc4random() % 256;
@@ -334,14 +364,13 @@ size_t getPixels(void *info, void *buffer, size_t count) {
     return image;
 }
 
-#pragma mark -
-#pragma mark Handlers
+#pragma mark - Handlers
 
 - (FBRequestHandler)handlerExpectingSuccessSignaling:(FBTestBlocker *)blocker {
     FBRequestHandler handler =
     ^(FBRequestConnection *connection, id result, NSError *error) {
-        STAssertTrue(!error, @"got unexpected error");
-        STAssertNotNil(result, @"didn't get expected result");
+        XCTAssertTrue(!error, @"got unexpected error");
+        XCTAssertNotNil(result, @"didn't get expected result");
         [blocker signal];
     };
     return [[handler copy] autorelease];
@@ -350,13 +379,11 @@ size_t getPixels(void *info, void *buffer, size_t count) {
 - (FBRequestHandler)handlerExpectingFailureSignaling:(FBTestBlocker *)blocker {
     FBRequestHandler handler =
     ^(FBRequestConnection *connection, id result, NSError *error) {
-        STAssertNotNil(error, @"didn't get expected error");
-        STAssertTrue(!result, @"got unexpected result");
+        XCTAssertNotNil(error, @"didn't get expected error");
+        XCTAssertTrue(!result, @"got unexpected result");
         [blocker signal];
     };
     return [[handler copy] autorelease];
 }
-
-#pragma mark -
 
 @end

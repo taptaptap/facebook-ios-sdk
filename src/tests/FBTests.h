@@ -14,17 +14,24 @@
  * limitations under the License.
  */
 
-#import <SenTestingKit/SenTestingKit.h>
-#import "FBTestSession.h"
-#import "FBRequestConnection.h"
+#import <OCMock/OCMock.h>
 
-extern NSString *kTestToken;
-extern NSString *kTestAppId;
+#import <XCTest/XCTest.h>
+
+#import "FBRequestConnection.h"
+#import "FBSDKMacros.h"
+#import "FBSession.h"
+
+FBSDK_EXTERN NSString *kTestToken;
+FBSDK_EXTERN NSString *kTestAppId;
+
+typedef void (^HTTPStubCallback)(NSURLRequest *request);
+
 
 @class FBTestBlocker;
 @protocol FBGraphObject;
 
-@interface FBTests : SenTestCase
+@interface FBTests : XCTestCase
 
 - (FBRequestHandler)handlerExpectingSuccessSignaling:(FBTestBlocker *)blocker;
 - (FBRequestHandler)handlerExpectingFailureSignaling:(FBTestBlocker *)blocker;
@@ -38,5 +45,20 @@ extern NSString *kTestAppId;
 - (FBSessionTokenCachingStrategy *)createMockTokenCachingStrategyWithToken:(FBAccessTokenData *)token;
 - (FBSessionTokenCachingStrategy *)createMockTokenCachingStrategyWithValidToken;
 - (FBSessionTokenCachingStrategy *)createMockTokenCachingStrategyWithExpiredToken;
+
+// Helpers for using OHHTTPStubs in tests.
+- (void)stubAllResponsesWithResult:(id)result;
+- (void)stubAllResponsesWithResult:(id)result
+                        statusCode:(int)statusCode;
+- (void)stubAllResponsesWithResult:(id)result
+                        statusCode:(int)statusCode
+                          callback:(HTTPStubCallback)callback;
+- (void)stubMatchingRequestsWithResponses:(NSDictionary *)requestsAndResponses
+                               statusCode:(int)statusCode
+                                 callback:(HTTPStubCallback)callback;
+
+- (OCMockObject *)mainBundleMock;
+
+@property (nonatomic, retain) id mockFBUtility;
 
 @end

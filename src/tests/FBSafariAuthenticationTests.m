@@ -14,15 +14,18 @@
  * limitations under the License.
  */
 
-#import "FBSafariAuthenticationTests.h"
-#import "FBSession.h"
-#import "FBError.h"
-#import "FBTestBlocker.h"
-#import "FBAccessTokenData+Internal.h"
-#import "FBUtility.h"
-#import <objc/objc-runtime.h>
+#import <objc/runtime.h>
 
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#import "FBAccessTokenData+Internal.h"
+#import "FBAuthenticationTests.h"
+#import "FBError.h"
+#import "FBSession.h"
+#import "FBTestBlocker.h"
+#import "FBUtility.h"
+
+
+@interface FBSafariAuthenticationTests : FBAuthenticationTests
+@end
 
 @implementation FBSafariAuthenticationTests
 {
@@ -75,6 +78,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:behavior
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -110,6 +114,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:behavior
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -154,7 +159,9 @@
                                  tokenCacheStrategy:nil];
     
     __block BOOL handlerCalled = NO;
-    [session openWithBehavior:behavior completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    [session openWithBehavior:behavior
+           fromViewController:nil
+            completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         handlerCalled = YES;
         [_blocker signal];
     }];
@@ -162,11 +169,12 @@
     [_blocker waitWithTimeout:.01];
     
     [(id)mockSession verify];
-    
-    assertThatBool(handlerCalled, equalToBool(YES));
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateOpen));
-    assertThat(mockSession.accessToken, equalTo(kAuthenticationTestValidToken));
-    assertThatInt(mockSession.loginType, equalToInt(FBSessionLoginTypeFacebookViaSafari));
+
+    XCTAssertTrue(handlerCalled);
+    XCTAssertEqual(FBSessionStateOpen, mockSession.state);
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    XCTAssertTrue([kAuthenticationTestValidToken isEqualToString:mockSession.accessToken]);
+    XCTAssertEqual(FBSessionLoginTypeFacebookViaSafari, mockSession.loginType);
     // TODO assert expiration date is what we set it to (within delta)
     
     [session release];
@@ -259,7 +267,7 @@
     
     __block BOOL handlerCalled = NO;
     __block NSError *handlerError = nil;
-    [session openWithBehavior:behavior completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    [session openWithBehavior:behavior completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         handlerCalled = YES;
         handlerError = [error retain];
         [_blocker signal];
@@ -268,11 +276,11 @@
     [_blocker waitWithTimeout:.01];
     
     [(id)mockSession verify];
-    
-    assertThatBool(handlerCalled, equalToBool(YES));
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateClosedLoginFailed));
-    assertThat(handlerError, notNilValue());
-    
+
+    XCTAssertTrue(handlerCalled);
+    XCTAssertEqual(FBSessionStateClosedLoginFailed, mockSession.state);
+    XCTAssertNotNil(handlerError);
+
     [session release];
 }
 
