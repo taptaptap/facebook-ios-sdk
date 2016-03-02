@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-#import "FBFacebookAppAuthenticationTests.h"
-#import "FBSession.h"
-#import "FBError.h"
-#import "FBTestBlocker.h"
-#import "FBAccessTokenData+Internal.h"
-#import "FBUtility.h"
-#import <objc/objc-runtime.h>
+#import <objc/runtime.h>
 
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#import "FBAccessTokenData+Internal.h"
+#import "FBAuthenticationTests.h"
+#import "FBError.h"
+#import "FBSession.h"
+#import "FBTestBlocker.h"
+#import "FBUtility.h"
+
+@interface FBFacebookAppAuthenticationTests : FBAuthenticationTests
+@end
 
 @implementation FBFacebookAppAuthenticationTests
 {
@@ -74,6 +76,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:behavior
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -109,6 +112,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:behavior
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -153,19 +157,22 @@
                                  tokenCacheStrategy:nil];
     
     __block BOOL handlerCalled = NO;
-    [session openWithBehavior:behavior completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    [session openWithBehavior:behavior
+           fromViewController:nil
+            completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         handlerCalled = YES;
         [_blocker signal];
     }];
     
-    STAssertTrue([_blocker waitWithTimeout:1], @"blocker timed out");
+    XCTAssertTrue([_blocker waitWithTimeout:1], @"blocker timed out");
     
     [(id)mockSession verify];
-    
-    assertThatBool(handlerCalled, equalToBool(YES));
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateOpen));
-    assertThat(mockSession.accessToken, equalTo(kAuthenticationTestValidToken));
-    assertThatInt(mockSession.loginType, equalToInt(FBSessionLoginTypeFacebookApplication));
+
+    XCTAssertTrue(handlerCalled);
+    XCTAssertEqual(FBSessionStateOpen, mockSession.state);
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    XCTAssertTrue([kAuthenticationTestValidToken isEqualToString:mockSession.accessToken]);
+    XCTAssertEqual(FBSessionLoginTypeFacebookApplication, mockSession.loginType);
     // TODO assert expiration date is what we set it to (within delta)
     
     [session release];
@@ -302,7 +309,7 @@
     
     __block BOOL handlerCalled = NO;
     __block NSError *handlerError = nil;
-    [session openWithBehavior:behavior completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
+    [session openWithBehavior:behavior completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
         handlerCalled = YES;
         handlerError = [error retain];
         [_blocker signal];
@@ -311,10 +318,10 @@
     [_blocker waitWithTimeout:.01];
     
     [(id)mockSession verify];
-    
-    assertThatBool(handlerCalled, equalToBool(YES));
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateClosedLoginFailed));
-    assertThat(handlerError, notNilValue());
+
+    XCTAssertTrue(handlerCalled);
+    XCTAssertEqual(FBSessionStateClosedLoginFailed, mockSession.state);
+    XCTAssertNotNil(handlerError);
 
     [session release];
 }
@@ -366,10 +373,10 @@
 
     [_blocker waitWithTimeout:.01];
     
-    assertThatBool(handlerCalled, equalToBool(YES));
-    assertThatInt(session.state, equalToInt(FBSessionStateOpen));
+    XCTAssertTrue(handlerCalled);
+    XCTAssertEqual(FBSessionStateOpen, session.state);
     assertThat(session.accessToken, equalTo(@"anewtoken"));
-    assertThatInt(session.loginType, equalToInt(FBSessionLoginTypeFacebookApplication));
+    XCTAssertEqual(FBSessionLoginTypeFacebookApplication, session.loginType);
 //    assertThat(session.permissions, contains(@"perm1", @"perm2", nil));
     
     [session release];
@@ -400,14 +407,14 @@
     [_blocker waitWithTimeout:.01];
     
     [(id)mockSession verify];
-    
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateCreatedOpening));
+
+    XCTAssertEqual(FBSessionStateCreatedOpening, mockSession.state);
     
     [session handleDidBecomeActive];
     
-    assertThatInt(session.state, equalToInt(FBSessionStateClosedLoginFailed));
-    assertThat(session.permissions, isNot(contains(@"permission1", nil)));
-    
+    XCTAssertEqual(FBSessionStateClosedLoginFailed, session.state);
+    XCTAssertFalse([session.permissions containsObject:@"permission1"]);
+
     [session release];
 }
 
@@ -437,8 +444,8 @@
     [_blocker waitWithTimeout:.01];
     
     [(id)mockSession verify];
-    
-    assertThatInt(mockSession.state, equalToInt(FBSessionStateOpen));
+
+    XCTAssertEqual(FBSessionStateOpen, mockSession.state);
     
     // On the reauth, don't provide results, which will simulate a reauth that is still in progress.
     [self mockSession:mockSession expectFacebookAppAuth:YES try:YES results:nil];
@@ -446,15 +453,15 @@
     NSArray *requestedPermissions = [NSArray arrayWithObjects:@"permission1", nil];
     __block NSError *handlerError = nil;
     [session requestNewReadPermissions:requestedPermissions
-                     completionHandler:^(FBSession *session, NSError *error) {
+                     completionHandler:^(FBSession *innerSession, NSError *error) {
         handlerError = error;
     }];
 
     [session handleDidBecomeActive];
-    
-    assertThat(handlerError, notNilValue());
-    assertThatInt(session.state, equalToInt(FBSessionStateOpen));
-    assertThat(session.permissions, isNot(contains(@"permission1", nil)));
+
+    XCTAssertNotNil(handlerError);
+    XCTAssertEqual(FBSessionStateOpen, session.state);
+    XCTAssertFalse([session.permissions containsObject:@"permission1"]);
     
     [session release];
 }

@@ -14,8 +14,14 @@
  * limitations under the License.
  */
 
-#import "FBAppCallTests.h"
+#import <XCTest/XCTest.h>
+
 #import "FBAppCall+Internal.h"
+#import "FBSettings.h"
+#import "FBTests.h"
+
+@interface FBAppCallTests : FBTests
+@end
 
 @implementation FBAppCallTests
 
@@ -28,13 +34,13 @@
     
     FBAppCall *target = [FBAppCall appCallFromURL:testURL];
 
-    STAssertNotNil(target, @"Failed to create an FBAppCall object");
+    XCTAssertNotNil(target, @"Failed to create an FBAppCall object");
 
-    STAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match originalURL");
-    STAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
-    STAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
+    XCTAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match originalURL");
+    XCTAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
+    XCTAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
 
-    STAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
+    XCTAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
 }
 
 - (void)testAppCallFromURLWithApplinkData {
@@ -50,17 +56,17 @@
     
     FBAppCall *target = [FBAppCall appCallFromURL:testURL];
     
-    STAssertNotNil(target, @"Failed to create an FBAppCall object");
+    XCTAssertNotNil(target, @"Failed to create an FBAppCall object");
     
-    STAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match originalURL");
-    STAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
-    STAssertTrue([target.appLinkData.ref isEqualToString:expectedRef], @"Failed to correctly parse ref");
-    STAssertTrue([target.appLinkData.userAgent isEqualToString:expectedUserAgent], @"Failed to correctly parse user_agent");
-    STAssertTrue([target.appLinkData.refererData isEqualToDictionary:expectedRefererData], @"Failed to correctly parse referer_data");
-    STAssertTrue([target.appLinkData.targetURL isEqual:expectedURL], @"Failed to correctly parse target_url");
-    STAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
+    XCTAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match originalURL");
+    XCTAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
+    XCTAssertTrue([target.appLinkData.ref isEqualToString:expectedRef], @"Failed to correctly parse ref");
+    XCTAssertTrue([target.appLinkData.userAgent isEqualToString:expectedUserAgent], @"Failed to correctly parse user_agent");
+    XCTAssertTrue([target.appLinkData.refererData isEqualToDictionary:expectedRefererData], @"Failed to correctly parse referer_data");
+    XCTAssertTrue([target.appLinkData.targetURL isEqual:expectedURL], @"Failed to correctly parse target_url");
+    XCTAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
     
-    STAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
+    XCTAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
 }
 
 - (void)testAppCallFromURLWithTapTime {
@@ -74,15 +80,15 @@
     
     FBAppCall *target = [FBAppCall appCallFromURL:testURL];
     
-    STAssertNotNil(target, @"Failed to create an FBAppCall object");
+    XCTAssertNotNil(target, @"Failed to create an FBAppCall object");
     
-    STAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match targetURL");
-    STAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
-    STAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
+    XCTAssertEqualObjects(testURL, target.appLinkData.originalURL, @"Failed to match targetURL");
+    XCTAssertNil(target.appLinkData.actionTypes, @"Failed to correctly parse fb_action_types");
+    XCTAssertTrue([target.appLinkData.originalQueryParameters isEqualToDictionary:expectedOriginalQueryParameters], @"Incorrect originalQueryParameters");
     
-    STAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
-    STAssertEqualObjects(@"Tiramisu", target.appLinkData.arguments[@"ref"], @"Failed to parse applinkdata arguments");
-    STAssertEqualObjects(@"123", target.appLinkData.arguments[@"tap_time_utc"], @"Failed to parse applinkdata arguments (tap_time)");
+    XCTAssertNil(target.dialogData, @"Did not expect dialogData to be set.");
+    XCTAssertEqualObjects(@"Tiramisu", target.appLinkData.arguments[@"ref"], @"Failed to parse applinkdata arguments");
+    XCTAssertEqualObjects(@"123", target.appLinkData.arguments[@"tap_time_utc"], @"Failed to parse applinkdata arguments (tap_time)");
 }
 
 - (void)testAppCallsWithSameIDAreEqual {
@@ -95,8 +101,9 @@
                                                   appID:nil
                                         urlSchemeSuffix:nil];
 
-    assertThat(appCall1, equalTo(appCall2));
-    assertThatInteger([appCall1 hash], equalToInteger([appCall2 hash]));
+    XCTAssertEqualObjects(appCall2, appCall1);
+    XCTAssertEqual([appCall2 hash], [appCall1 hash]);
+
 }
 
 - (void)testAppCallsAreNotEqual {
@@ -108,10 +115,8 @@
                                           enforceScheme:NO
                                                   appID:nil
                                         urlSchemeSuffix:nil];
-
-    assertThat(appCall1, isNot(equalTo(appCall2)));
-    assertThat(appCall1, isNot(equalTo(nil)));
-    assertThat(appCall1, isNot(equalTo(@"string")));
+    XCTAssertNotEqualObjects(appCall2, appCall1);
+    XCTAssertNotNil(appCall1);
 }
 
 @end

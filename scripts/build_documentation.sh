@@ -18,17 +18,28 @@
 # This script builds the API documentation from source-level comments.
 # This script requires appledoc be installed: https://github.com/tomaz/appledoc
 
-. ${FB_SDK_SCRIPT:-$(dirname $0)}/common.sh
+. "${FB_SDK_SCRIPT:-$(dirname "$0")}/common.sh"
 
 # -----------------------------------------------------------------------------
 # Build pre-requisites
 #
 if is_outermost_build; then
-    . $FB_SDK_SCRIPT/build_framework.sh -n
+    . "$FB_SDK_SCRIPT/build_framework.sh" -n
 fi
 
 APPLEDOC_PATH="$FB_SDK_BUILD"/appledoc
 progress_message "$APPLEDOC_PATH"
+
+if [ ! -f "$APPLEDOC_PATH" ]; then
+  # appledoc is currently being refactored for v3, which will be free from GC.
+  # In the meantime, use a pre-compiled binary if it is dropped into
+  # vendor/appledoc_bin/
+  VENDOR_APPLEDOC_PATH="$FB_SDK_ROOT"/vendor/appledoc_bin/appledoc
+  if [ -f "$VENDOR_APPLEDOC_PATH" ]; then
+    cp "$VENDOR_APPLEDOC_PATH" "$APPLEDOC_PATH"
+  fi
+fi
+
 if [ ! -f "$APPLEDOC_PATH" ]; then
   progress_message Building appledoc
   pushd "$FB_SDK_ROOT"/vendor/appledoc/ >/dev/null
@@ -40,20 +51,24 @@ fi
 # Build docs
 #
 progress_message Building Documentation.
-test -d $FB_SDK_BUILD \
-  || mkdir -p $FB_SDK_BUILD \
+test -d "$FB_SDK_BUILD" \
+  || mkdir -p "$FB_SDK_BUILD" \
   || die "Could not create directory $FB_SDK_BUILD"
 
-cd $FB_SDK_SRC
+cd "$FB_SDK_SRC"
 
-rm -rf $FB_SDK_FRAMEWORK_DOCS
+rm -rf "$FB_SDK_FRAMEWORK_DOCS"
+
+DOCSET="$FB_SDK_BUILD"/docset.build
+rm -rf "$DOCSET"
 
 hash "$APPLEDOC_PATH" &>/dev/null
 if [ "$?" -eq "0" ]; then
     APPLEDOC_DOCSET_NAME="Facebook SDK $FB_SDK_VERSION_SHORT for iOS"
-    $APPLEDOC_PATH --project-name "$APPLEDOC_DOCSET_NAME" \
+    "$APPLEDOC_PATH" --project-name "$APPLEDOC_DOCSET_NAME" \
 	--project-company "Facebook" \
 	--company-id "com.facebook" \
+        --output "$DOCSET" \
 	--preprocess-headerdoc \
 	--docset-bundle-filename "$FB_SDK_DOCSET_NAME" \
 	--docset-feed-name "$APPLEDOC_DOCSET_NAME" \
@@ -64,27 +79,11 @@ if [ "$?" -eq "0" ]; then
 	--keep-undocumented-members \
 	--keep-undocumented-objects \
 	--explicit-crossref \
-	$FB_SDK_FRAMEWORK/Headers \
+	"$FB_SDK_FRAMEWORK/Headers" \
     || die 'appledoc execution failed'
 else
     die "appledoc not installed, unable to build documentation"
 fi
-
-# Temporary workaround to an appledoc bug that drops protocol names.
-function replace_string() {
-    perl -pi -e "s/$1/$2/" $3
-}
-
-DOCSDIR="$DOCSET"/docset/Contents/Resources/Documents
-replace_string 'id&lt;&gt; delegate' 'id&lt;FBFriendPickerDelegate&gt; delegate' "$DOCSDIR"/Classes/FBFriendPickerViewController.html
-replace_string 'id&lt;&gt; delegate' 'id&lt;FBPlacePickerDelegate&gt; delegate' "$DOCSDIR"/Classes/FBPlacePickerViewController.html
-replace_string 'id&lt;&gt; selection' 'id&lt;FBGraphPlace&gt; selection' "$DOCSDIR"/Classes/FBPlacePickerViewController.html
-replace_string 'id&lt;&gt; graphObject' 'id&lt;FBGraphObject&gt; graphObject' "$DOCSDIR"/Classes/FBRequest.html
-replace_string 'id&lt;&gt; application' 'id&lt;FBGraphObject&gt; application' "$DOCSDIR"/Protocols/FBOpenGraphAction.html
-replace_string 'id&lt;&gt; from' 'id&lt;FBGraphUser&gt; from' "$DOCSDIR"/Protocols/FBOpenGraphAction.html
-replace_string 'id&lt;&gt; place' 'id&lt;FBGraphPlace&gt; place' "$DOCSDIR"/Protocols/FBOpenGraphAction.html
-replace_string 'id&lt;&gt; location' 'id&lt;FBGraphLocation&gt; location' "$DOCSDIR"/Protocols/FBGraphUser.html
-replace_string 'id&lt;&gt; location' 'id&lt;FBGraphLocation&gt; location' "$DOCSDIR"/Protocols/FBGraphPlace.html
 
 # -----------------------------------------------------------------------------
 # Done

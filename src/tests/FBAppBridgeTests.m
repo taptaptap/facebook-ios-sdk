@@ -14,8 +14,6 @@
  * limitations under the License.
  */
 
-#import "FBAppBridgeTests.h"
-
 #import <OCMock/OCMock.h>
 
 #import "FBAppBridge.h"
@@ -23,10 +21,9 @@
 #import "FBAppCall+Internal.h"
 #import "FBDialogsData+Internal.h"
 #import "FBError.h"
-#import "FBIsStringRepresentingJSONDictionary.h"
-#import "FBIsURLHavingQueryParams.h"
-#import "FBSettings.h"
+#import "FBInternalSettings.h"
 #import "FBTestBlocker.h"
+#import "FBTests.h"
 #import "FBUtility.h"
 
 static NSString *const kTestAppID = @"123456789";
@@ -42,7 +39,7 @@ static NSString *const kTestDialogMethod = @"some_dialog";
 
 static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chicken&fb_applink_args=%7B%22version%22%3A2%2C%22bridge_args%22%3A%7B%22method%22%3A%22applink%22%7D%2C%22method_args%22%3A%7B%22ref%22%3A%22Tiramisu%22%7D%7D&fb_click_time_utc=123";
 
-@interface FBAppBridge (Testing)
+@interface FBAppBridge (FBAppBridgeTests)
 
 @property (nonatomic, retain) NSMutableDictionary *pendingAppCalls;
 @property (nonatomic, retain) NSMutableDictionary *callbacks;
@@ -52,7 +49,12 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 - (void)performDialogAppCall:(FBAppCall *)appCall
                 bridgeScheme:(FBAppBridgeScheme *)bridgeScheme
                      session:(FBSession *)session
+     useSafariViewController:(BOOL)useSafariViewController
            completionHandler:(FBAppCallHandler)handler;
+
+@end
+
+@interface FBAppBridgeTests : FBTests
 @end
 
 @implementation FBAppBridgeTests
@@ -61,7 +63,6 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     // This one is just here to keep UIApplication class methods mocked without a circular reference.
     id _anotherMockApplication;
     id _mockFBSettings;
-    id _mockFBUtility;
 }
 
 #pragma mark Helpers
@@ -73,6 +74,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     }
 }
 - (void)setUp {
+    [super setUp];
     // FBAppBridge relies on UIApplication for handling URLs; mock it and return
     // the mock from [UIApplication sharedApplication]. This little dance is necessary to avoid
     // a circular reference that keeps the class method from being unmocked.
@@ -86,10 +88,11 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [[[_mockFBSettings stub] andReturn:kTestAppName] defaultDisplayName];
     
     // Pretend that all URL schemes are registered or [FBAppCall init] will fail.
-    _mockFBUtility = [OCMockObject mockForClass:[FBUtility class]];
     BOOL yes = YES;
-    [[[_mockFBUtility stub] andReturnValue:OCMOCK_VALUE(yes)]
+
+    [[[self.mockFBUtility stub] andReturnValue:OCMOCK_VALUE(yes)]
         isRegisteredURLScheme:kTestURLScheme];
+    [[_mockApplication stub] keyWindow];
 }
 
 - (void)tearDown {
@@ -97,7 +100,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     _mockApplication = nil;
     _anotherMockApplication = nil;
     _mockFBSettings = nil;
-    _mockFBUtility = nil;
+    [super tearDown];
 }
 
 - (FBAppCall *)newAppCall:(BOOL)withDialogsData {
@@ -159,7 +162,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 #pragma mark Class method tests
 
 - (void)testSharedInstanceIsSingleton {
-    assertThat([FBAppBridge sharedInstance], equalTo([FBAppBridge sharedInstance]));
+    XCTAssertEqual([FBAppBridge sharedInstance], [FBAppBridge sharedInstance]);
 }
 
 #pragma mark dispatchDialogAppCall/performDialogAppCall tests
@@ -180,11 +183,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [[mockAppBridge expect] performDialogAppCall:appCall
                                     bridgeScheme:testBridgeScheme
                                          session:session
+                         useSafariViewController:NO
                                completionHandler:handler];
     
     [mockAppBridge dispatchDialogAppCall:appCall
                             bridgeScheme:testBridgeScheme
                                  session:session
+                 useSafariViewController:NO
                        completionHandler:handler];
 
     [self waitForMainQueueToFinish];
@@ -201,6 +206,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:nil];
 
     [_mockApplication verify];
@@ -209,14 +215,17 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 - (void)testAppIDIncludedInGeneratedURL {
     FBAppCall *appCall = [self newAppCall:YES];
 
-    id urlMatcher = hasQueryParams(hasEntry(@"app_id", kTestAppID));
     [[_mockApplication expect] canOpenURL:[NSURL URLWithString:@"fbapi://"]];
-    [[_mockApplication expect] openURL:urlMatcher];
+    [[_mockApplication expect] openURL:[OCMArg checkWithBlock:^BOOL(id obj) {
+        return [[FBUtility dictionaryByParsingURLQueryPart:((NSURL *)obj).query][@"app_id"] isEqualToString:kTestAppID];
+
+    }]];
 
     FBAppBridge *appBridge = [[[FBAppBridge alloc] init] autorelease];
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:nil];
     
     [_mockApplication verify];
@@ -226,7 +235,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     _mockFBSettings = [OCMockObject mockForClass:[FBSettings class]];
     [[[_mockFBSettings stub] andReturn:nil] defaultAppID];
 
-    STAssertThrowsSpecificNamed(
+    XCTAssertThrowsSpecificNamed(
                                 [[[FBAppBridge alloc] init] autorelease],
                                 NSException,
                                 FBInvalidOperationException,
@@ -238,19 +247,20 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 - (void)testAppMetadataIncludedInGeneratedURL {
     FBAppCall *appCall = [self newAppCall:YES];
 
-    id urlMatcher = hasQueryParams(hasEntry(@"bridge_args",
-        representsJSONDictionary(hasEntries(
-                                            @"app_name", kTestAppName,
-                                            @"action_id", appCall.ID,
-                                            nil
-                                            ))));
     [[_mockApplication expect] canOpenURL:[NSURL URLWithString:@"fbapi://"]];
-    [[_mockApplication expect] openURL:urlMatcher];
+    [[_mockApplication expect] openURL:[OCMArg checkWithBlock:^BOOL(id obj) {
+        NSDictionary *dict = [FBUtility simpleJSONDecode:
+                              [FBUtility dictionaryByParsingURLQueryPart:
+                               ((NSURL *)obj).query][@"bridge_args"]];
+        return ([dict[@"app_name"] isEqualToString:kTestAppName] &&
+                [dict[@"action_id"] isEqualToString:appCall.ID]);
+    }]];
 
     FBAppBridge *appBridge = [[[FBAppBridge alloc] init] autorelease];
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:nil];
 
     [_mockApplication verify];
@@ -264,15 +274,19 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     NSDictionary *clientState = @{@"foo": @"bar", @"hello": @"world"};
     appCall.dialogData.clientState = clientState;
     
-    id urlMatcher = hasQueryParams(hasEntry(@"bridge_args",
-        representsJSONDictionary(hasEntry(@"client_state", representsJSONDictionary(clientState)))));
     [[_mockApplication expect] canOpenURL:[NSURL URLWithString:@"fbapi://"]];
-    [[_mockApplication expect] openURL:urlMatcher];
+    [[_mockApplication expect] openURL:[OCMArg checkWithBlock:^BOOL(id obj) {
+        NSDictionary *dict = [FBUtility simpleJSONDecode:
+                              [FBUtility dictionaryByParsingURLQueryPart:
+                               ((NSURL *)obj).query][@"bridge_args"]];
+        return [dict[@"client_state"] isEqualToString:[FBUtility simpleJSONEncode:clientState]];
+    }]];
 
     FBAppBridge *appBridge = [[[FBAppBridge alloc] init] autorelease];
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:nil];
     
     [_mockApplication verify];
@@ -286,14 +300,16 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                            urlSchemeSuffix:kTestURLSchemeSuffix
                                         tokenCacheStrategy:nil] autorelease];
     
-    id urlMatcher = hasQueryParams(hasEntry(@"scheme_suffix", kTestURLSchemeSuffix));
     [[_mockApplication expect] canOpenURL:[NSURL URLWithString:@"fbapi://"]];
-    [[_mockApplication expect] openURL:urlMatcher];
+    [[_mockApplication expect] openURL:[OCMArg checkWithBlock:^BOOL(id obj) {
+        return [[FBUtility dictionaryByParsingURLQueryPart:((NSURL *)obj).query][@"scheme_suffix"] isEqualToString:kTestURLSchemeSuffix];
+    }]];
 
     FBAppBridge *appBridge = [[[FBAppBridge alloc] init] autorelease];
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:session
+            useSafariViewController:NO
                   completionHandler:nil];
     
     [_mockApplication verify];
@@ -303,14 +319,17 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     NSDictionary *arguments = @{@"foo": @"bar", @"hello": @"world"};
     FBAppCall *appCall = [self newAppCall:YES arguments:arguments];
 
-    id urlMatcher = hasQueryParams(hasEntry(@"method_args", representsJSONDictionary(arguments)));
+
     [[_mockApplication expect] canOpenURL:[NSURL URLWithString:@"fbapi://"]];
-    [[_mockApplication expect] openURL:urlMatcher];
+    [[_mockApplication expect] openURL:[OCMArg checkWithBlock:^BOOL(id obj) {
+        return ([FBUtility dictionaryByParsingURLQueryPart:((NSURL *)obj).query][@"method_args"]!=nil);
+    }]];
 
     FBAppBridge *appBridge = [[[FBAppBridge alloc] init] autorelease];
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:nil];
 
     [_mockApplication verify];
@@ -329,12 +348,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:handler];
 
     [_mockApplication verify];
 
-    assertThat(appBridge.pendingAppCalls, hasEntry(appCall.ID, appCall));
-    assertThat(appBridge.callbacks, hasKey(appCall.ID));
+    XCTAssertTrue([appBridge.pendingAppCalls[appCall.ID] isEqual:appCall]);
+    XCTAssertNotNil(appBridge.callbacks[appCall.ID]);
 }
 
 - (void)testAppCallIsNotTrackedOnFailedOpen {
@@ -350,12 +370,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:handler];
 
     [_mockApplication verify];
 
-    assertThat(appBridge.pendingAppCalls, isNot(hasKey(appCall.ID)));
-    assertThat(appBridge.callbacks, isNot(hasKey(appCall.ID)));
+    XCTAssertNil(appBridge.pendingAppCalls[appCall.ID]);
+    XCTAssertNil(appBridge.callbacks[appCall.ID]);
 }
 
 - (void)testHandlerCalledWithErrorOnFailedOpen {
@@ -366,10 +387,9 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     FBAppCall *appCall = [self newAppCall:YES];
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, notNilValue());
-        assertThat(call.error.domain, equalTo(FacebookSDKDomain));
-        assertThatInteger(call.error.code, equalToInteger(FBErrorDialog));
+        XCTAssertNotNil(call.error);
+        XCTAssertTrue([FacebookSDKDomain isEqualToString:call.error.domain]);
+        XCTAssertEqual(FBErrorDialog, call.error.code);
         handlerCalled = YES;
     };
 
@@ -377,11 +397,12 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:handler];
 
     [_mockApplication verify];
 
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(handlerCalled);
 }
 
 #pragma mark handleDidBecomeActive tests
@@ -394,10 +415,9 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     FBAppCall *appCall = [self newAppCall:YES];
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, notNilValue());
-        assertThat(call.error.domain, equalTo(FacebookSDKDomain));
-        assertThatInteger(call.error.code, equalToInteger(FBErrorAppActivatedWhilePendingAppCall));
+        XCTAssertNotNil(call.error);
+        XCTAssertTrue([FacebookSDKDomain isEqualToString:call.error.domain]);
+        XCTAssertEqual(FBErrorAppActivatedWhilePendingAppCall, call.error.code);
         handlerCalled = YES;
     };
 
@@ -405,14 +425,14 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:handler];
 
     [appBridge handleDidBecomeActive];
     
     [_mockApplication verify];
 
-    assertThatBool(handlerCalled, equalToBool(YES));
-
+    XCTAssertTrue(handlerCalled);
 }
 
 #pragma mark handleOpenURL tests
@@ -431,8 +451,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(NO));
-    assertThatBool(handlerCalled, equalToBool(NO));
+    XCTAssertFalse(result);
+    XCTAssertFalse(handlerCalled);
 }
 
 - (void)testWrongURLHostReturnsNoWithoutCallingFallbackHandler {
@@ -449,8 +469,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(NO));
-    assertThatBool(handlerCalled, equalToBool(NO));
+    XCTAssertFalse(result);
+    XCTAssertFalse(handlerCalled);
 }
 
 - (void)testNonAppBridgeURLWithoutFallbackHandlerReturnsNo {
@@ -462,7 +482,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:nil];
 
-    assertThatBool(result, equalToBool(NO));
+    XCTAssertFalse(result);
 }
 
 - (void)testNonAppBridgeURLCallsFallbackHandlerAndReturnsYes {
@@ -470,7 +490,7 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
+        XCTAssertNotNil(call);
         handlerCalled = YES;
     };
 
@@ -479,9 +499,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                          sourceApplication:nil
                                    session:nil
                            fallbackHandler:handler];
-
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(result);
+    XCTAssertTrue(handlerCalled);
 }
 
 - (void)testNonFacebookSourceApplicationFails {
@@ -489,11 +508,10 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, notNilValue());
-        assertThat(call.error.domain, equalTo(FacebookSDKDomain));
-        assertThatInteger(call.error.code, equalToInteger(FBErrorUntrustedURL));
-        
+        XCTAssertNotNil(call.error);
+        XCTAssertTrue([FacebookSDKDomain isEqualToString:call.error.domain]);
+        XCTAssertEqual(FBErrorUntrustedURL, call.error.code);
+
         handlerCalled = YES;
     };
 
@@ -503,8 +521,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(result);
+    XCTAssertTrue(handlerCalled);
 }
 
 - (void)testNonFacebookSourceApplicationChangesSymmetricKey {
@@ -518,10 +536,10 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:nil];
 
-    assertThatBool(result, equalToBool(YES));
-    
+    XCTAssertTrue(result);
+
     NSString *newKey = [FBAppBridge symmetricKeyAndForceRefresh:NO];
-    assertThat(oldKey, isNot(equalTo(newKey)));
+    XCTAssertFalse([oldKey isEqualToString:newKey]);
 }
 
 - (void)testURLWithoutCallIDFails {
@@ -529,10 +547,9 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, notNilValue());
-        assertThat(call.error.domain, equalTo(FacebookSDKDomain));
-        assertThatInteger(call.error.code, equalToInteger(FBErrorMalformedURL));
+        XCTAssertNotNil(call.error);
+        XCTAssertTrue([FacebookSDKDomain isEqualToString:call.error.domain]);
+        XCTAssertEqual(FBErrorMalformedURL, call.error.code);
 
         handlerCalled = YES;
     };
@@ -543,8 +560,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(result);
+    XCTAssertTrue(handlerCalled);
 }
 
 - (void)testURLWithoutVersionFails {
@@ -552,10 +569,9 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, notNilValue());
-        assertThat(call.error.domain, equalTo(FacebookSDKDomain));
-        assertThatInteger(call.error.code, equalToInteger(FBErrorMalformedURL));
+        XCTAssertNotNil(call.error);
+        XCTAssertTrue([FacebookSDKDomain isEqualToString:call.error.domain]);
+        XCTAssertEqual(FBErrorMalformedURL, call.error.code);
 
         handlerCalled = YES;
     };
@@ -566,8 +582,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(result);
+    XCTAssertTrue(handlerCalled);
 }
 
 - (void)testURLWithUntrackedCallIDCallsFallbackHandler {
@@ -578,14 +594,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block handlerCalled = NO;
     id handler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, nilValue());
-        assertThat(call.ID, equalTo(callID));
+        XCTAssertNotNil(call);
+        XCTAssertNil(call.error);
+        XCTAssertTrue([call.ID isEqualToString:callID]);
 
-        assertThat(call.dialogData, notNilValue());
-        assertThat(call.dialogData.method, equalTo(kTestDialogMethod));
-        assertThat(call.dialogData.arguments, equalTo(methodArgs));
-        assertThat(call.dialogData.clientState, equalTo(clientState));
+        XCTAssertTrue([kTestDialogMethod isEqualToString:call.dialogData.method]);
+        XCTAssertEqualObjects(methodArgs, call.dialogData.arguments);
+        XCTAssertEqualObjects(clientState, call.dialogData.clientState);
 
         handlerCalled = YES;
     };
@@ -596,8 +611,8 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:handler];
 
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(handlerCalled, equalToBool(YES));
+    XCTAssertTrue(result);
+    XCTAssertTrue(handlerCalled);
 }
 
 - (void)testURLWithTrackedCallIDCallsHandler {
@@ -613,14 +628,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
 
     BOOL __block completionHandlerCalled = NO;
     id completionHandler = ^(FBAppCall *call) {
-        assertThat(call, notNilValue());
-        assertThat(call.error, nilValue());
-        assertThat(call.ID, equalTo(appCall.ID));
+        XCTAssertNotNil(call);
+        XCTAssertNil(call.error);
+        XCTAssertTrue([call.ID isEqualToString:appCall.ID]);
 
-        assertThat(call.dialogData, notNilValue());
-        assertThat(call.dialogData.method, equalTo(kTestDialogMethod));
-        assertThat(call.dialogData.arguments, equalTo(methodArgs));
-        assertThat(call.dialogData.clientState, equalTo(clientState));
+        XCTAssertTrue([kTestDialogMethod isEqualToString:call.dialogData.method]);
+        XCTAssertEqualObjects(methodArgs, call.dialogData.arguments);
+        XCTAssertEqualObjects(clientState, call.dialogData.clientState);
 
         completionHandlerCalled = YES;
     };
@@ -629,12 +643,13 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
     [appBridge performDialogAppCall:appCall
                        bridgeScheme:testBridgeScheme
                             session:nil
+            useSafariViewController:NO
                   completionHandler:completionHandler];
 
     [_mockApplication verify];
 
-    assertThat(appBridge.pendingAppCalls, hasEntry(appCall.ID, appCall));
-    assertThat(appBridge.callbacks, hasKey(appCall.ID));
+    XCTAssertEqualObjects(appCall, appBridge.pendingAppCalls[appCall.ID]);
+    XCTAssertNotNil(appBridge.callbacks[appCall.ID]);
 
     // We should get original method args, client state, etc., even if they aren't in the URL.
     NSURL *url = [self newAppBridgeURL:appCall.ID version:@"1" methodArgs:nil clientState:nil];
@@ -649,12 +664,12 @@ static NSString *const kNonAppBridgeAppCallURL = @"fb123456789://link?meal=Chick
                                    session:nil
                            fallbackHandler:fallbackHandler];
 
-    assertThatBool(result, equalToBool(YES));
-    assertThatBool(fallbackHandlerCalled, equalToBool(NO));
-    assertThatBool(completionHandlerCalled, equalToBool(YES));
-    
-    assertThat(appBridge.pendingAppCalls, isNot(hasKey(appCall.ID)));
-    assertThat(appBridge.callbacks, isNot(hasKey(appCall.ID)));
+    XCTAssertTrue(result);
+    XCTAssertTrue(completionHandlerCalled);
+    XCTAssertFalse(fallbackHandlerCalled);
+
+    XCTAssertNil(appBridge.pendingAppCalls[appCall.ID]);
+    XCTAssertNil(appBridge.callbacks[appCall.ID]);
 }
 
 #pragma mark Encryption/decryption tests

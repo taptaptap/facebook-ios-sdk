@@ -18,6 +18,8 @@
 
 #import "FBAppEvents+Internal.h"
 #import "FBGraphUser.h"
+#import "FBInternalSettings.h"
+#import "FBLogger.h"
 #import "FBProfilePictureView.h"
 #import "FBRequest.h"
 #import "FBSession+Internal.h"
@@ -88,7 +90,8 @@
                                                          ofType:@"bundle"];
         self.bundle = [NSBundle bundleWithPath:path];
         if (self.bundle == nil) {
-            NSLog(@"WARNING: FBUserSettingsViewController could not find FBUserSettingsViewResources.bundle");
+            [FBLogger singleShotLogEntry:FBLoggingBehaviorInformational
+                                logEntry:@"WARNING: FBUserSettingsViewController could not find FBUserSettingsViewResources.bundle"];
         }
         [self initializeBlocks];
     }
@@ -246,7 +249,10 @@
     [self updateBackgroundImage];
 }
 
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmismatched-return-types"
 - (NSUInteger)supportedInterfaceOrientations {
+#pragma GCC diagnostic pop
     if (UI_USER_INTERFACE_IDIOM() == UIUserInterfaceIdiomPad) {
         return UIInterfaceOrientationMaskAll;
     } else {
@@ -363,7 +369,10 @@
     if (self.permissions) {
         [FBSession openActiveSessionWithPermissions:self.permissions
                                        allowLoginUI:allowLoginUI
+                                      loginBehavior:FBSessionLoginBehaviorWithFallbackToWebView
+                                             isRead:NO
                                     defaultAudience:self.defaultAudience
+                                 fromViewController:self
                                   completionHandler:self.sessionStateHandler];
     } else if (![self.publishPermissions count]) {
         [FBSession openActiveSessionWithReadPermissions:self.readPermissions

@@ -14,66 +14,68 @@
  * limitations under the License.
  */
 
+#import <objc/runtime.h>
+
 #import <OCMock/OCMock.h>
-#import "FBAppEventsIntegrationTests.h"
-#import "Facebook.h"
+
 #import "FBAppEvents+Internal.h"
+#import "FBIntegrationTests.h"
+#import "FBSettings+Internal.h"
 #import "FBTestBlocker.h"
 #import "FBUtility.h"
-#import <objc/objc-runtime.h>
-
-@interface FBAppEventsIntegrationTests () {
-    id _mockFBUtility;
-    Method _originalPublishInstall;
-    Method _swizzledPublishInstall;
-
-    Method _originalLogEvent;
-    Method _swizzledLogEvent;
-}
-@end
+#import "Facebook.h"
 
 static int publishInstallCount = 0;
 static NSString *loggedEvent = nil;
+static NSDictionary *loggedParameter = nil;
+static id gMockAppEventsSingleton = nil;
+
+// In order to test behavior on the FBAppEvents singleton,
+// we setup a static mock object that is available to each
+// test; i.e, if you need to perform OCMock expect/verify,
+// apply them to `gMockAppEventsSingleton`
+@implementation FBAppEvents(FBAppEventsIntegrationTests)
+
++(FBAppEvents *)singleton {
+    return gMockAppEventsSingleton;
+}
+
+@end
+
+@interface FBAppEventsIntegrationTests : FBIntegrationTests
+@end
 
 @implementation FBAppEventsIntegrationTests
 
 - (void)setUp {
     [super setUp];
-    // Before every test, mock the FBUtility class to return a nil
-    // advertiserID because the `[[ advertisingIdentifier] UUIDString]` call likes to hang.
-    _mockFBUtility = [[OCMockObject mockForClass:[FBUtility class]] retain];
-    [[[_mockFBUtility stub] andReturn:nil] advertiserID];
+    gMockAppEventsSingleton = [[OCMockObject partialMockForObject:[[[FBAppEvents alloc] init] autorelease]] retain];
 }
 
 - (void)tearDown {
     [super tearDown];
-    [_mockFBUtility release];
-    _mockFBUtility = nil;
+    [gMockAppEventsSingleton release];
+    gMockAppEventsSingleton = nil;
 }
 
-+ (void)publishInstallCounter:(NSString *)appID {
+- (void)publishInstallCounter:(NSString *)appID {
   publishInstallCount++;
 }
 
-+ (void)logEvent:(NSString *)eventName {
-  [loggedEvent release];
-  loggedEvent = [eventName retain];
+- (void)logEvent:(NSString *)eventName parameters:(NSDictionary *)parameters {
+    [loggedEvent release];
+    loggedEvent = [eventName retain];
+    [loggedParameter release];
+    loggedParameter = [[NSDictionary alloc] initWithDictionary:parameters copyItems:YES];
 }
 
 // Ensure session is not closed by a bogus app event log.
 - (void)testSessionNotClosed {
-    // *** COPY-PASTA README *** read this if you are copying tests for FBAppEvents!
-    // Configure OCMock of FBAppEvents to expect handleActivitiesPostCompletion: instead of instanceFlush: because
-    // 1. [OCMArg any] does not work for primitives
-    //   (especially for methods that only take a primitive argument. Even the 2.2 update with ignoringNonObjectArgs does not work).
-    // 2. We want to wait for the end of handleActivitiesPostCompletion to make sure other tests are started
-    //  before the flush finishes (otherwise, there are logs "in-flight" that may block other tests' flush).
-    id appEventsSingletonMock = [OCMockObject partialMockForObject:[FBAppEvents singleton]];
-    [[appEventsSingletonMock expect] handleActivitiesPostCompletion:[OCMArg any]
-                                                       loggingEntry:[OCMArg any]
-                                                            session:[OCMArg checkWithBlock:^BOOL(id obj) {
-        FBSession *session = (FBSession *)obj;
-        NSLog(@"verifying session:%@", session);
+    [[gMockAppEventsSingleton expect] handleActivitiesPostCompletion:[OCMArg any]
+                                                        loggingEntry:[OCMArg any]
+                                                             session:[OCMArg checkWithBlock:^BOOL(id obj) {
+                                                                        FBSession *session = (FBSession *)obj;
+                                                                        NSLog(@"verifying session:%@", session);
                                                                         //session should remain open.
                                                                         return session.isOpen;
                                                                     }]
@@ -83,21 +85,21 @@ static NSString *loggedEvent = nil;
                                                                   permissions:nil
                                                                expirationDate:nil
                                                                     loginType:FBSessionLoginTypeFacebookApplication
-                                                                  refreshDate:nil];
+                                                                  refreshDate:nil
+                                                       permissionsRefreshDate:nil
+                                                                        appID:@"appid"];
     FBSession *session = [[[FBSession alloc] initWithAppID:@"appid"
                                               permissions:nil
                                           urlSchemeSuffix:nil
                                        tokenCacheStrategy:[FBSessionTokenCachingStrategy nullCacheInstance]] autorelease];
     [session openFromAccessTokenData:accessToken completionHandler:nil];
     
-    STAssertTrue(session.isOpen, @"Unable to verify test, session should be open");
+    XCTAssertTrue(session.isOpen, @"Unable to verify test, session should be open");
     
     [FBAppEvents logEvent:@"some_event" valueToSum:nil parameters:nil session:session];
     [FBAppEvents flush];
     
-    [FBTestBlocker waitForVerifiedMock:appEventsSingletonMock delay:5.0];
-  
-    [appEventsSingletonMock stopMocking];
+    [FBTestBlocker waitForVerifiedMock:gMockAppEventsSingleton delay:5.0];
 }
 
 - (void)testUpdateParametersWithEventUsageLimitsAndBundleInfo {
@@ -106,50 +108,46 @@ static NSString *loggedEvent = nil;
     // default should set 1 for the app setting.
     NSUserDefaults *defaults = [NSUserDefaults standardUserDefaults];
     [defaults removeObjectForKey:@"com.facebook.sdk:FBAppEventsLimitEventUsage"];
-    [FBUtility updateParametersWithEventUsageLimitsAndBundleInfo:parameters];
-    STAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"1"], @"app tracking should default to 1");
+    parameters = [FBUtility activityParametersDictionaryForEvent:@"event" implicitEventsOnly:NO shouldAccessAdvertisingID:YES];
+    XCTAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"1"], @"app tracking should default to 1");
   
     // when limited, app tracking is 0.
     [parameters removeAllObjects];
     FBSettings.limitEventAndDataUsage = YES;
-    [FBUtility updateParametersWithEventUsageLimitsAndBundleInfo:parameters];
-    STAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"0"], @"app tracking should be 0 when event usage is limited");
+    parameters = [FBUtility activityParametersDictionaryForEvent:@"event" implicitEventsOnly:NO shouldAccessAdvertisingID:YES];
+    XCTAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"0"], @"app tracking should be 0 when event usage is limited");
   
     // when explicitly unlimited, app tracking is 1.
     [parameters removeAllObjects];
     FBSettings.limitEventAndDataUsage = NO;
-    [FBUtility updateParametersWithEventUsageLimitsAndBundleInfo:parameters];
-    STAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"1"], @"app tracking should be 1 when event usage is explicitly unlimited");
+    parameters = [FBUtility activityParametersDictionaryForEvent:@"event" implicitEventsOnly:NO shouldAccessAdvertisingID:YES];
+    XCTAssertTrue([parameters[@"application_tracking_enabled"] isEqualToString:@"1"], @"app tracking should be 1 when event usage is explicitly unlimited");
 }
 
 - (void)testActivateApp {
-    // swizzle out the underlying calls.
-    _originalPublishInstall = class_getClassMethod([FBSettings class], @selector(publishInstall:));
-    _swizzledPublishInstall = class_getClassMethod([self class], @selector(publishInstallCounter:));
-    method_exchangeImplementations(_originalPublishInstall, _swizzledPublishInstall);
+    id mockSettings = [OCMockObject mockForClass:[FBSettings class]];
+    [[[mockSettings stub] andCall:@selector(publishInstallCounter:) onObject:self] publishInstall:[OCMArg any]];
 
-    _originalLogEvent = class_getClassMethod([FBAppEvents class], @selector(logEvent:));
-    _swizzledLogEvent = class_getClassMethod([self class], @selector(logEvent:));
-    method_exchangeImplementations(_originalLogEvent, _swizzledLogEvent);
-  
+    id mockFBAppEvents = [OCMockObject mockForClass:[FBAppEvents class]];
+    [[[mockFBAppEvents stub] andCall:@selector(logEvent:parameters:) onObject:self] logEvent:[OCMArg any] parameters:[OCMArg any]];
+
     publishInstallCount = 0;
     loggedEvent = nil;
-  
+    NSString *originalAppId = [FBSettings defaultAppID];
     [FBSettings setDefaultAppID:@"appid"];
     [FBAppEvents activateApp];
-    STAssertTrue(publishInstallCount == 1, @"publishInstall was not triggered by activateApp");
-    STAssertTrue([@"fb_mobile_activate_app" isEqualToString:loggedEvent], @"activate app event not logged by activateApp call!");
-  
+    [FBSettings setDefaultAppID:originalAppId];
+
+    XCTAssertTrue(publishInstallCount == 1, @"publishInstall was not triggered by activateApp");
+    XCTAssertTrue([@"fb_mobile_activate_app" isEqualToString:loggedEvent], @"activate app event not logged by activateApp call!");
+    XCTAssertNotNil(loggedParameter[@"fb_mobile_launch_source"], @"activate app event not logged with source");
     [loggedEvent release];
     loggedEvent = nil;
-  
-    method_exchangeImplementations(_swizzledPublishInstall, _originalPublishInstall);
-    _originalPublishInstall = nil;
-    _swizzledPublishInstall = nil;
-  
-    method_exchangeImplementations(_swizzledLogEvent, _originalLogEvent);
-    _originalLogEvent = nil;
-    _swizzledLogEvent = nil;
+    [loggedParameter release];
+    loggedParameter = nil;
+
+    [mockSettings stopMocking];
+    [mockFBAppEvents stopMocking];
 }
 
 @end

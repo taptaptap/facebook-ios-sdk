@@ -14,13 +14,15 @@
  * limitations under the License.
  */
 
-#import "FBSystemAccountAuthenticationTests.h"
-#import "FBSession.h"
-#import "FBError.h"
-#import "FBUtility.h"
-#import <objc/objc-runtime.h>
+#import <objc/runtime.h>
 
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+#import "FBAuthenticationTests.h"
+#import "FBError.h"
+#import "FBSession.h"
+#import "FBUtility.h"
+
+@interface FBSystemAccountAuthenticationTests : FBAuthenticationTests
+@end
 
 @implementation FBSystemAccountAuthenticationTests
 {
@@ -64,6 +66,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -71,10 +74,20 @@
     [session release];
 }
 
-- (void)testOpenDoesNotTrySystemAccountAuthIfUnavailable {
+- (void)testOpenDoesNotTrySystemAccountAuthIfUnavailableOnDevice {
+    [self testOpenDoesNotTrySystemAccountAuthIfUnavailableServer:YES device:NO];
+}
+
+- (void)testOpenDoesNotTrySystemAccountAuthIfUnavailableOnServer {
+    [self testOpenDoesNotTrySystemAccountAuthIfUnavailableServer:NO device:YES];
+}
+
+- (void)testOpenDoesNotTrySystemAccountAuthIfUnavailableServer:(BOOL)serverSupports
+                                                        device:(BOOL)deviceSupports {
     FBSession *mockSession = [OCMockObject partialMockForObject:[FBSession alloc]];
-    
-    [self mockSession:mockSession supportSystemAccount:NO];
+
+    [self setFetchedSupportSystemAccount:serverSupports];
+    [self mockSession:mockSession supportSystemAccount:deviceSupports];
     [self mockSession:mockSession expectSystemAccountAuth:NO succeed:NO];
     [self mockSession:mockSession supportMultitasking:NO];
     [self mockSession:mockSession expectFacebookAppAuth:NO try:NO results:nil];
@@ -89,15 +102,17 @@
     
     __block NSError *handlerError = nil;
     [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent
-            completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                handlerError = error;
+           fromViewController:nil
+            completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
+                handlerError = [error retain];
             }];
     
     [(id)mockSession verify];
-    
-    assertThat(handlerError, notNilValue());
-    assertThat(handlerError.userInfo[FBErrorLoginFailedReason], equalTo(FBErrorLoginFailedReasonInlineNotCancelledValue));
-    
+
+    XCTAssertNotNil(handlerError);
+    XCTAssertTrue([FBErrorLoginFailedReasonInlineNotCancelledValue isEqualToString:handlerError.userInfo[FBErrorLoginFailedReason]]);
+
+    [handlerError release];
     [session release];
 }
 
@@ -135,6 +150,7 @@
                                  tokenCacheStrategy:nil];
     
     [session openWithBehavior:behavior
+           fromViewController:nil
             completionHandler:nil];
     
     [(id)mockSession verify];
@@ -160,16 +176,19 @@
     
     __block NSError *handlerError = nil;
     [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent
-            completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                handlerError = error;
+           fromViewController:nil
+            completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
+                handlerError = [error retain];
             }];
     
     [(id)mockSession verify];
+
+    XCTAssertNil(handlerError);
+    XCTAssertEqual(FBSessionStateOpen, session.state);
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+    XCTAssertTrue([kAuthenticationTestValidToken isEqualToString:session.accessToken]);
     
-    assertThat(handlerError, nilValue());
-    assertThatInt(session.state, equalToInt(FBSessionStateOpen));
-    assertThat(session.accessToken, equalTo(kAuthenticationTestValidToken));
-    
+    [handlerError release];
     [session release];
 }
 
@@ -191,26 +210,38 @@
     
     __block NSError *handlerError = nil;
     [session openWithBehavior:FBSessionLoginBehaviorUseSystemAccountIfPresent
-            completionHandler:^(FBSession *session, FBSessionState status, NSError *error) {
-                handlerError = error;
+            completionHandler:^(FBSession *innerSession, FBSessionState status, NSError *error) {
+                handlerError = [error retain];
             }];
     
     [(id)mockSession verify];
     
-    assertThat(handlerError, notNilValue());
-    assertThat(handlerError.userInfo[FBErrorLoginFailedReason], equalTo(FBErrorLoginFailedReasonSystemError));
-    assertThatInt(session.state, equalToInt(FBSessionStateClosedLoginFailed));
+
+    XCTAssertNotNil(handlerError);
+    XCTAssertTrue([handlerError.userInfo[FBErrorLoginFailedReason] isEqualToString:FBErrorLoginFailedReasonSystemError]);
+    XCTAssertEqual(FBSessionStateClosedLoginFailed, session.state);
     
+    [handlerError release];
     [session release];
 }
 
 // TODO test untosed device continues auth process
 // TODO test reauth case
 
-- (void)testSystemAccountNotAvailableTriesNextAuthMethod {
+- (void)testSystemAccountNotAvailableOnServerTriesNextAuthMethod {
+    [self testSystemAccountNotAvailableTriesNextAuthMethodServer:NO device:YES];
+}
+
+- (void)testSystemAccountNotAvailableOnDeviceTriesNextAuthMethod {
+    [self testSystemAccountNotAvailableTriesNextAuthMethodServer:YES device:NO];
+}
+
+- (void)testSystemAccountNotAvailableTriesNextAuthMethodServer:(BOOL)serverSupports
+                                                        device:(BOOL)deviceSupports {
     FBSession *mockSession = [OCMockObject partialMockForObject:[FBSession alloc]];
     
-    [self mockSession:mockSession supportSystemAccount:NO];
+    [self setFetchedSupportSystemAccount:serverSupports];
+    [self mockSession:mockSession supportSystemAccount:deviceSupports];
     [self mockSession:mockSession expectSystemAccountAuth:NO succeed:NO];
     [self mockSession:mockSession supportMultitasking:YES];
     [self mockSession:mockSession expectFacebookAppAuth:YES try:YES results:nil];
